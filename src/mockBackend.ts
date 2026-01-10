@@ -1,16 +1,22 @@
 /**
  * MOCK BACKEND IMPLEMENTATION
  * 
- * Validation-Gated Referral System
+ * Validation-Gated Referral System with Signature Verification
  * 
- * Rules:
- * - All functions are deterministic (no random behavior)
- * - Data persists in memory during session
- * - Replace with actual HTTP API calls in production
+ * Security Rules:
+ * - All sensitive actions require signatures
+ * - Signatures are verified using tweetnacl
+ * - Nonces prevent replay attacks
+ * - Timestamps prevent old signatures
+ * - No action happens without user consent
  */
 
+import nacl from 'tweetnacl';
+import { PublicKey } from '@solana/web3.js';
 import type {
+  ValidationRequest,
   ValidationResult,
+  IssueAffiliateLinkRequest,
   AffiliateLinkResponse,
   AttributeReferralRequest,
   AttributeReferralResponse,
@@ -52,26 +58,84 @@ interface ReferralMappingRecord {
 const referrerStore = new Map<string, ReferrerRecord>();
 const referralMappingStore = new Map<string, ReferralMappingRecord>(); // Key: referred_wallet
 const affiliateIdStore = new Map<string, string>(); // affiliate_id → wallet_address
+const usedNonces = new Set<string>(); // Track used nonces to prevent replay
 
 // Constants
 const VALIDATION_THRESHOLD_USD = 2.0;
 const BASE_MULTIPLIER = 2;
 const MAX_BONUS_MULTIPLIER = 3;
 const BONUS_PER_REFERRAL = 1;
+const SIGNATURE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// ============================================================================
+// SIGNATURE VERIFICATION
+// ============================================================================
+
+/**
+ * Verify a signature from a Solana wallet
+ */
+function verifySignature(
+  message: string,
+  signature: string,
+  publicKey: string
+): boolean {
+  try {
+    const messageBytes = new TextEncoder().encode(message);
+    const signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    const publicKeyBytes = new PublicKey(publicKey).toBytes();
+
+    return nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
+  } catch (error) {
+    console.error('Signature verification error:', error);
+    return false;
+  }
+}
+
+/**
+ * Validate nonce and timestamp
+ */
+function validateNonceAndTimestamp(nonce: string, timestamp: number): { valid: boolean; error?: string } {
+  // Check if nonce was already used
+  if (usedNonces.has(nonce)) {
+    return { valid: false, error: 'Nonce already used (replay attack detected)' };
+  }
+
+  // Check timestamp (reject signatures older than 5 minutes)
+  const now = Date.now();
+  const age = now - timestamp;
+  if (age > SIGNATURE_TIMEOUT_MS) {
+    return { valid: false, error: 'Signature too old (timestamp expired)' };
+  }
+
+  if (age < 0) {
+    return { valid: false, error: 'Invalid timestamp (future timestamp)' };
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Mark nonce as used
+ */
+function markNonceUsed(nonce: string): void {
+  usedNonces.add(nonce);
+  // Clean up old nonces periodically (in production, use TTL cache)
+  if (usedNonces.size > 10000) {
+    usedNonces.clear();
+  }
+}
 
 // ============================================================================
 // HELPER: Generate unique affiliate ID
 // ============================================================================
 
 function generateAffiliateId(): string {
-  // Generate a short, unique ID (8 characters)
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // No confusing chars
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let id = '';
   for (let i = 0; i < 8; i++) {
     id += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   
-  // Ensure uniqueness
   while (affiliateIdStore.has(id)) {
     id = '';
     for (let i = 0; i < 8; i++) {
@@ -89,17 +153,40 @@ function generateAffiliateId(): string {
 /**
  * Validate that a wallet holds ≥ $2 USD worth of the countdown token.
  * 
- * Rules:
- * - Checks SPL token balance
- * - USD value ≥ $2 (calculated at acquisition time)
- * - Balance must be acquired via purchase, not transfer or airdrop
- * - Validation result is locked permanently (write-once)
+ * REQUIRES SIGNATURE - User must sign message to authorize validation
  */
-export const validateHoldings: ValidateHoldingsFunction = async (wallet: string): Promise<ValidationResult> => {
+export const validateHoldings: ValidateHoldingsFunction = async (
+  request: ValidationRequest
+): Promise<ValidationResult> => {
   await new Promise(resolve => setTimeout(resolve, 500));
 
+  // Verify signature
+  const signatureValid = verifySignature(request.message, request.signature, request.wallet);
+  if (!signatureValid) {
+    return {
+      validated: false,
+      usd_value: 0,
+      validated_at: null,
+      error: 'Invalid signature',
+    };
+  }
+
+  // Validate nonce and timestamp
+  const nonceCheck = validateNonceAndTimestamp(request.nonce, request.timestamp);
+  if (!nonceCheck.valid) {
+    return {
+      validated: false,
+      usd_value: 0,
+      validated_at: null,
+      error: nonceCheck.error || 'Invalid nonce or timestamp',
+    };
+  }
+
+  // Mark nonce as used
+  markNonceUsed(request.nonce);
+
   // Check if already validated
-  const existing = referrerStore.get(wallet);
+  const existing = referrerStore.get(request.wallet);
   if (existing?.validated) {
     return {
       validated: true,
@@ -120,20 +207,19 @@ export const validateHoldings: ValidateHoldingsFunction = async (wallet: string)
   // 6. Lock validation result permanently
   // ========================================================================
 
-  // MOCK: Deterministic validation (for testing)
-  // Uses wallet address hash to create consistent results
-  const walletHash = wallet.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const mockValidated = (walletHash % 10) >= 3; // 70% validated
+  // MOCK: Deterministic validation
+  const walletHash = request.wallet.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const mockValidated = (walletHash % 10) >= 3;
   const mockUsdValue = mockValidated ? 2.5 : 1.0;
 
   if (mockValidated && mockUsdValue >= VALIDATION_THRESHOLD_USD) {
     const validatedAt = Date.now();
-    referrerStore.set(wallet, {
-      wallet_address: wallet,
-      affiliate_id: null, // Will be issued separately
+    referrerStore.set(request.wallet, {
+      wallet_address: request.wallet,
+      affiliate_id: null,
       validated: true,
       validated_at: validatedAt,
-      usd_value: mockUsdValue, // Locked at validation time
+      usd_value: mockUsdValue,
       successful_referrals_count: 0,
     });
 
@@ -159,17 +245,40 @@ export const validateHoldings: ValidateHoldingsFunction = async (wallet: string)
 /**
  * Issue a unique affiliate link to a validated wallet.
  * 
- * Rules:
- * - Wallet must be validated first
- * - One wallet = one affiliate ID (immutable)
- * - Affiliate ID never changes
- * - If already issued, returns existing affiliate_id
+ * REQUIRES SIGNATURE - User must sign message to authorize link issuance
  */
-export const issueAffiliateLink: IssueAffiliateLinkFunction = async (wallet: string): Promise<AffiliateLinkResponse> => {
+export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
+  request: IssueAffiliateLinkRequest
+): Promise<AffiliateLinkResponse> => {
   await new Promise(resolve => setTimeout(resolve, 300));
 
+  // Verify signature
+  const signatureValid = verifySignature(request.message, request.signature, request.wallet);
+  if (!signatureValid) {
+    return {
+      success: false,
+      affiliate_id: null,
+      referral_link: null,
+      error: 'Invalid signature',
+    };
+  }
+
+  // Validate nonce and timestamp
+  const nonceCheck = validateNonceAndTimestamp(request.nonce, request.timestamp);
+  if (!nonceCheck.valid) {
+    return {
+      success: false,
+      affiliate_id: null,
+      referral_link: null,
+      error: nonceCheck.error || 'Invalid nonce or timestamp',
+    };
+  }
+
+  // Mark nonce as used
+  markNonceUsed(request.nonce);
+
   // Check if wallet is validated
-  const referrer = referrerStore.get(wallet);
+  const referrer = referrerStore.get(request.wallet);
   if (!referrer || !referrer.validated) {
     return {
       success: false,
@@ -191,11 +300,10 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (wallet: str
 
   // Generate new affiliate ID
   const affiliateId = generateAffiliateId();
-  affiliateIdStore.set(affiliateId, wallet);
+  affiliateIdStore.set(affiliateId, request.wallet);
 
-  // Update referrer record
   referrer.affiliate_id = affiliateId;
-  referrerStore.set(wallet, referrer);
+  referrerStore.set(request.wallet, referrer);
 
   const referralLink = `${window.location.origin}${window.location.pathname}?via=${affiliateId}`;
 
@@ -213,15 +321,33 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (wallet: str
 /**
  * Attribute a referral when a new user visits via link.
  * 
- * Rules:
- * - First affiliate wins (immutable)
- * - Attribution is immutable
- * - Self-referrals are rejected
+ * REQUIRES SIGNATURE - User must sign message to authorize attribution
  */
 export const attributeReferral: AttributeReferralFunction = async (
   request: AttributeReferralRequest
 ): Promise<AttributeReferralResponse> => {
   await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Verify signature
+  const signatureValid = verifySignature(request.message, request.signature, request.referred_wallet);
+  if (!signatureValid) {
+    return {
+      success: false,
+      message: 'Invalid signature',
+    };
+  }
+
+  // Validate nonce and timestamp
+  const nonceCheck = validateNonceAndTimestamp(request.nonce, request.timestamp);
+  if (!nonceCheck.valid) {
+    return {
+      success: false,
+      message: nonceCheck.error || 'Invalid nonce or timestamp',
+    };
+  }
+
+  // Mark nonce as used
+  markNonceUsed(request.nonce);
 
   // Get referrer wallet from affiliate ID
   const referrerWallet = affiliateIdStore.get(request.affiliate_id);
@@ -281,17 +407,10 @@ export const attributeReferral: AttributeReferralFunction = async (
 
 /**
  * Validate that a referred wallet has acquired ≥ $2 USD worth of token.
- * 
- * Rules:
- * - Must acquire ≥ $2 USD worth of token
- * - Must pass on-chain validation
- * - Transfers and airdrops do not qualify
- * - Once validated → permanently true (write-once)
  */
 export const validateReferredWallet: ValidateReferredWalletFunction = async (
   wallet: string
 ): Promise<ValidationResult> => {
-  // Check if wallet has a referral mapping
   const mapping = referralMappingStore.get(wallet);
   if (!mapping) {
     return {
@@ -302,29 +421,34 @@ export const validateReferredWallet: ValidateReferredWalletFunction = async (
     };
   }
 
-  // Check if already validated
   if (mapping.referred_validated) {
     return {
       validated: true,
-      usd_value: 2.5, // Mock value
+      usd_value: 2.5,
       validated_at: mapping.validated_at || null,
     };
   }
 
-  // Validate holdings (same logic as validateHoldings)
-  const validation = await validateHoldings(wallet);
-  
-  if (validation.validated) {
-    // Update mapping
+  // For referred wallets, we still need to check holdings
+  // In production, this would verify on-chain purchases
+  const walletHash = wallet.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  const mockValidated = (walletHash % 10) >= 3;
+  const mockUsdValue = mockValidated ? 2.5 : 1.0;
+
+  if (mockValidated && mockUsdValue >= VALIDATION_THRESHOLD_USD) {
     mapping.referred_validated = true;
-    mapping.validated_at = validation.validated_at || Date.now();
+    mapping.validated_at = Date.now();
     referralMappingStore.set(wallet, mapping);
 
-    // Increment referrer's successful referrals count
     await incrementReferralCount(mapping.referrer_wallet);
   }
 
-  return validation;
+  return {
+    validated: mockValidated && mockUsdValue >= VALIDATION_THRESHOLD_USD,
+    usd_value: mockUsdValue,
+    validated_at: mockValidated ? Date.now() : null,
+    error: mockValidated ? undefined : `Holdings must be ≥ $${VALIDATION_THRESHOLD_USD} USD`,
+  };
 };
 
 // ============================================================================
@@ -354,15 +478,6 @@ export const incrementReferralCount: IncrementReferralCountFunction = async (
 // ALLOCATION MULTIPLIER
 // ============================================================================
 
-/**
- * Calculate allocation multiplier for a wallet.
- * 
- * Rules:
- * - Base allocation: 2× (all validated holders)
- * - Referral bonus: +1× per successful referee
- * - Maximum bonus: 3× (caps at 3 successful referrals)
- * - Extra referrals beyond 3 do nothing
- */
 export const calculateAllocationMultiplier: CalculateAllocationMultiplierFunction = async (
   wallet: string
 ): Promise<AllocationMultiplierResponse> => {

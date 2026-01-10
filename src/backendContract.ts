@@ -14,6 +14,14 @@
 // HOLDINGS VALIDATION
 // ============================================================================
 
+export interface ValidationRequest {
+  wallet: string;
+  message: string;
+  signature: string; // Base64 encoded signature
+  timestamp: number;
+  nonce: string;
+}
+
 export interface ValidationResult {
   validated: boolean;
   usd_value: number; // USD value at time of validation (locked)
@@ -27,15 +35,18 @@ export interface ValidationResult {
  * Validates that a wallet holds ≥ $2 USD worth of the countdown token.
  * 
  * Rules:
+ * - REQUIRES SIGNATURE - User must sign message to authorize validation
+ * - Backend verifies signature before proceeding
  * - Checks SPL token balance for the countdown token
  * - USD value ≥ $2 (calculated at acquisition time)
  * - Balance must be acquired via purchase, not transfer or airdrop
  * - Validation result is locked permanently (write-once)
  * - If < $2 → validation fails
  * - If ≥ $2 → validation succeeds
+ * - Rejects reused nonces and old timestamps
  */
 export type ValidateHoldingsFunction = (
-  wallet: string
+  request: ValidationRequest
 ) => Promise<ValidationResult>;
 
 // ============================================================================
@@ -49,21 +60,32 @@ export interface AffiliateLinkResponse {
   error?: string;
 }
 
+export interface IssueAffiliateLinkRequest {
+  wallet: string;
+  message: string;
+  signature: string; // Base64 encoded signature
+  timestamp: number;
+  nonce: string;
+}
+
 /**
  * POST /api/issue-affiliate-link
  * 
  * Issues a unique affiliate link to a validated wallet.
  * 
  * Rules:
+ * - REQUIRES SIGNATURE - User must sign message to authorize link issuance
+ * - Backend verifies signature before proceeding
  * - Wallet must be validated first (validateHoldings must return validated: true)
  * - One wallet = one affiliate ID (immutable)
  * - Affiliate ID never changes
  * - No regeneration
  * - No manual override
  * - If already issued, returns existing affiliate_id
+ * - Rejects reused nonces and old timestamps
  */
 export type IssueAffiliateLinkFunction = (
-  wallet: string
+  request: IssueAffiliateLinkRequest
 ) => Promise<AffiliateLinkResponse>;
 
 // ============================================================================
@@ -73,6 +95,10 @@ export type IssueAffiliateLinkFunction = (
 export interface AttributeReferralRequest {
   referred_wallet: string;
   affiliate_id: string; // From ?via= parameter
+  message: string;
+  signature: string; // Base64 encoded signature
+  timestamp: number;
+  nonce: string;
 }
 
 export interface AttributeReferralResponse {
@@ -88,11 +114,14 @@ export interface AttributeReferralResponse {
  * Attributes a referral to an affiliate when a new user visits via link.
  * 
  * Rules:
+ * - REQUIRES SIGNATURE - User must sign message to authorize attribution
+ * - Backend verifies signature before proceeding
  * - URL contains ?via=<affiliate_id>
  * - Rewardful captures visit
  * - First affiliate wins (immutable)
  * - Attribution is immutable
  * - Self-referrals are rejected
+ * - Rejects reused nonces and old timestamps
  */
 export type AttributeReferralFunction = (
   request: AttributeReferralRequest

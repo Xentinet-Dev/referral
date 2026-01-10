@@ -13,8 +13,13 @@ import {
 const COUNTDOWN_END_UTC = new Date('2024-12-31T23:59:59Z').getTime();
 const VALIDATION_THRESHOLD_USD = 2.0;
 
+// Helper: Generate random nonce
+function generateNonce(): string {
+  return `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+}
+
 function App() {
-  const { publicKey } = useWallet();
+  const { publicKey, signMessage } = useWallet();
   const [countdown, setCountdown] = useState<number>(0);
   
   // Validation state
@@ -34,6 +39,7 @@ function App() {
   // Referred user state
   const [affiliateIdFromUrl, setAffiliateIdFromUrl] = useState<string | null>(null);
   const [referredValidationStatus, setReferredValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
+  const [attributionComplete, setAttributionComplete] = useState(false);
 
   // Countdown timer
   useEffect(() => {
@@ -58,7 +64,7 @@ function App() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Check for ?via= parameter (referred user)
+  // Check for ?via= parameter (referred user) - NO SIGNING HERE
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const viaParam = urlParams.get('via');
@@ -67,25 +73,7 @@ function App() {
     }
   }, []);
 
-  // Attribute referral when wallet connects and ?via= is present
-  useEffect(() => {
-    const handleAttribution = async () => {
-      if (!publicKey || !affiliateIdFromUrl) return;
-
-      try {
-        await attributeReferral({
-          referred_wallet: publicKey.toString(),
-          affiliate_id: affiliateIdFromUrl,
-        });
-      } catch (error) {
-        console.error('Attribution error:', error);
-      }
-    };
-
-    handleAttribution();
-  }, [publicKey, affiliateIdFromUrl]);
-
-  // Fetch referrer data when wallet connects
+  // Fetch referrer data when wallet connects - NO SIGNING HERE
   useEffect(() => {
     const fetchReferrerData = async () => {
       if (!publicKey) return;
@@ -116,24 +104,50 @@ function App() {
     fetchReferrerData();
   }, [publicKey]);
 
-  // Validate holdings
+  // Validate holdings - REQUIRES SIGNATURE (user click only)
   const handleValidateHoldings = useCallback(async () => {
-    if (!publicKey) return;
+    if (!publicKey || !signMessage) return;
 
     setValidationStatus('checking');
     setValidationError(null);
 
     try {
-      const result = await validateHoldings(publicKey.toString());
+      // Generate nonce and timestamp
+      const nonce = generateNonce();
+      const timestamp = Date.now();
+      
+      // Create message to sign
+      const message = `Action: ValidateHoldings
+Wallet: ${publicKey.toString()}
+Timestamp: ${timestamp}
+Nonce: ${nonce}`;
+
+      // Request signature from user
+      const encodedMessage = new TextEncoder().encode(message);
+      const signature = await signMessage(encodedMessage);
+      
+      // Convert signature to base64 (browser-compatible)
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < signature.length; i += chunkSize) {
+        binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
+      }
+      const signedMessage = btoa(binary);
+
+      // Send to backend with signature
+      const result = await validateHoldings({
+        wallet: publicKey.toString(),
+        message,
+        signature: signedMessage,
+        timestamp,
+        nonce,
+      });
       
       if (result.validated) {
         setValidationStatus('validated');
         
-        // Automatically issue affiliate link after validation
-        const linkResult = await issueAffiliateLink(publicKey.toString());
-        if (linkResult.success && linkResult.referral_link) {
-          setReferralLink(linkResult.referral_link);
-        }
+        // Automatically issue affiliate link after validation (requires another signature)
+        await handleIssueAffiliateLink();
         
         // Refresh referrer data
         const data = await getReferrerData(publicKey.toString());
@@ -152,7 +166,97 @@ function App() {
       setValidationStatus('failed');
       setValidationError(error instanceof Error ? error.message : 'Validation error');
     }
-  }, [publicKey]);
+  }, [publicKey, signMessage]);
+
+  // Issue affiliate link - REQUIRES SIGNATURE (user click only)
+  const handleIssueAffiliateLink = useCallback(async () => {
+    if (!publicKey || !signMessage) return;
+
+    try {
+      // Generate nonce and timestamp
+      const nonce = generateNonce();
+      const timestamp = Date.now();
+      
+      // Create message to sign
+      const message = `Action: IssueAffiliateLink
+Wallet: ${publicKey.toString()}
+Timestamp: ${timestamp}
+Nonce: ${nonce}`;
+
+      // Request signature from user
+      const encodedMessage = new TextEncoder().encode(message);
+      const signature = await signMessage(encodedMessage);
+      
+      // Convert signature to base64
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < signature.length; i += chunkSize) {
+        binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
+      }
+      const signedMessage = btoa(binary);
+
+      // Send to backend with signature
+      const linkResult = await issueAffiliateLink({
+        wallet: publicKey.toString(),
+        message,
+        signature: signedMessage,
+        timestamp,
+        nonce,
+      });
+      
+      if (linkResult.success && linkResult.referral_link) {
+        setReferralLink(linkResult.referral_link);
+      }
+    } catch (error) {
+      console.error('Error issuing affiliate link:', error);
+    }
+  }, [publicKey, signMessage]);
+
+  // Attribute referral - REQUIRES SIGNATURE (user click only)
+  const handleAttributeReferral = useCallback(async () => {
+    if (!publicKey || !signMessage || !affiliateIdFromUrl || attributionComplete) return;
+
+    try {
+      // Generate nonce and timestamp
+      const nonce = generateNonce();
+      const timestamp = Date.now();
+      
+      // Create message to sign
+      const message = `Action: AttributeReferral
+Wallet: ${publicKey.toString()}
+AffiliateID: ${affiliateIdFromUrl}
+Timestamp: ${timestamp}
+Nonce: ${nonce}`;
+
+      // Request signature from user
+      const encodedMessage = new TextEncoder().encode(message);
+      const signature = await signMessage(encodedMessage);
+      
+      // Convert signature to base64
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < signature.length; i += chunkSize) {
+        binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
+      }
+      const signedMessage = btoa(binary);
+
+      // Send to backend with signature
+      const result = await attributeReferral({
+        referred_wallet: publicKey.toString(),
+        affiliate_id: affiliateIdFromUrl,
+        message,
+        signature: signedMessage,
+        timestamp,
+        nonce,
+      });
+      
+      if (result.success) {
+        setAttributionComplete(true);
+      }
+    } catch (error) {
+      console.error('Attribution error:', error);
+    }
+  }, [publicKey, signMessage, affiliateIdFromUrl, attributionComplete]);
 
   // Validate referred wallet (for users who came via ?via=)
   const handleValidateReferredWallet = useCallback(async () => {
@@ -227,6 +331,9 @@ function App() {
             <p className="text-sm text-gray-300 mb-4">
               You must hold ≥ ${VALIDATION_THRESHOLD_USD} USD worth of the countdown token to receive a referral link.
             </p>
+            <p className="text-xs text-gray-400 mb-4">
+              This action requires a wallet signature to authorize validation.
+            </p>
             {validationStatus === 'checking' && (
               <p className="text-sm text-gray-400 mb-4">Validating holdings...</p>
             )}
@@ -235,7 +342,7 @@ function App() {
             )}
             <button
               onClick={handleValidateHoldings}
-              disabled={validationStatus === 'checking'}
+              disabled={validationStatus === 'checking' || !signMessage}
               className="px-6 py-3 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
             >
               {validationStatus === 'checking' ? 'Validating...' : 'Validate Holdings'}
@@ -297,12 +404,34 @@ function App() {
       )}
 
       {/* Referred User Section */}
-      {publicKey && affiliateIdFromUrl && (
+      {publicKey && affiliateIdFromUrl && !attributionComplete && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4">Referred User</h2>
             <p className="text-sm text-gray-300 mb-4">
-              You arrived via a referral link. Validate your holdings to count as a successful referral.
+              You arrived via a referral link. Sign to authorize referral attribution.
+            </p>
+            <p className="text-xs text-gray-400 mb-4">
+              This action requires a wallet signature to authorize attribution.
+            </p>
+            <button
+              onClick={handleAttributeReferral}
+              disabled={!signMessage}
+              className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
+            >
+              Authorize Referral Attribution
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Referred User Validation */}
+      {publicKey && affiliateIdFromUrl && attributionComplete && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-lg font-semibold mb-4">Referred User</h2>
+            <p className="text-sm text-gray-300 mb-4">
+              Referral attributed. Validate your holdings to count as a successful referral.
             </p>
             {referredValidationStatus === 'idle' && (
               <button
@@ -328,7 +457,7 @@ function App() {
       {/* Simple Explanation */}
       <section className="mt-12 pt-8 border-t border-gray-400 border-opacity-50">
         <p className="text-sm text-gray-200">
-          Referral links are earned by validating holdings (≥ $2 USD). Each successful referral adds +1× to your allocation multiplier, up to a maximum of 3× total.
+          Referral links are earned by validating holdings (≥ $2 USD). Each successful referral adds +1× to your allocation multiplier, up to a maximum of 3× total. All actions require wallet signatures for security.
         </p>
       </section>
     </div>
