@@ -267,11 +267,32 @@ Nonce: ${nonce}`;
       // Fetch a fresh nonce (EVERY click)
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
       const noncePath = backendUrl ? `${backendUrl}/api/nonce` : '/api/nonce';
+      
+      console.log('[NONCE-FETCH] Requesting nonce from', noncePath);
+      
       const nonceRes = await fetch(noncePath);
+      
+      if (!nonceRes.ok) {
+        const errorText = await nonceRes.text();
+        console.error('[NONCE-FETCH] Failed', {
+          status: nonceRes.status,
+          statusText: nonceRes.statusText,
+          error: errorText,
+        });
+        throw new Error(`Failed to fetch nonce: ${nonceRes.status} ${nonceRes.statusText}`);
+      }
+      
       const nonceData = await nonceRes.json();
+      
+      console.log('[NONCE-FETCH] Response', {
+        success: nonceData.success,
+        hasNonce: !!nonceData.nonce,
+        hasTimestamp: !!nonceData.timestamp,
+        error: nonceData.error,
+      });
 
       if (!nonceData.success || !nonceData.nonce || !nonceData.timestamp) {
-        throw new Error('Failed to fetch nonce');
+        throw new Error(nonceData.error || 'Failed to fetch nonce');
       }
 
       const { nonce, timestamp } = nonceData;

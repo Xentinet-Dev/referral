@@ -31,6 +31,10 @@ export default async function handler(req, res) {
 
   try {
     if (!supabase) {
+      console.error('[NONCE] Supabase not configured', {
+        hasUrl: !!supabaseUrl,
+        hasKey: !!supabaseServiceKey,
+      });
       return res.status(500).json({
         success: false,
         error: 'Supabase not configured',
@@ -40,6 +44,11 @@ export default async function handler(req, res) {
     const nonce = crypto.randomUUID();
     const timestamp = Math.floor(Date.now() / 1000);
     const expiresAt = new Date(Date.now() + NONCE_EXPIRY_MINUTES * 60 * 1000).toISOString();
+
+    console.log('[NONCE] Generating nonce', {
+      nonce: nonce.slice(0, 8) + '...',
+      timestamp,
+    });
 
     const { error } = await supabase
       .from('nonces')
@@ -51,10 +60,14 @@ export default async function handler(req, res) {
     if (error) {
       console.error('[NONCE] Error storing nonce', {
         error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
       });
       return res.status(500).json({
         success: false,
-        error: 'Failed to generate nonce',
+        error: `Failed to generate nonce: ${error.message}`,
+        code: error.code,
       });
     }
 
