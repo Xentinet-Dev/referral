@@ -67,15 +67,25 @@ DROP POLICY IF EXISTS "Service role full access wallet_affiliates" ON wallet_aff
 DROP POLICY IF EXISTS "Service role full access nonces" ON nonces;
 DROP POLICY IF EXISTS "Service role full access rewardful_conversions" ON rewardful_conversions;
 
--- Create policies
+-- Create policies with both USING and WITH CHECK clauses
+-- USING: controls SELECT, UPDATE (existing rows), DELETE
+-- WITH CHECK: controls INSERT, UPDATE (new values)
 CREATE POLICY "Service role full access wallet_activation" ON wallet_activation
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL 
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access wallet_affiliates" ON wallet_affiliates
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL 
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access nonces" ON nonces
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL 
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access rewardful_conversions" ON rewardful_conversions
-  FOR ALL USING (auth.role() = 'service_role');
+  FOR ALL 
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
