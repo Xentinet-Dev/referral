@@ -27,6 +27,7 @@ function App() {
   const [verificationError, setVerificationError] = useState<string | null>(null);
   const [showLearnMore, setShowLearnMore] = useState<boolean>(false);
   const [activationPending, setActivationPending] = useState<boolean>(false);
+  const [showReferralLinkModal, setShowReferralLinkModal] = useState<boolean>(false);
   
   // SAFETY GUARD: Track user-initiated connection intent
   // CRITICAL: This flag is ONLY set when user explicitly clicks Connect Wallet button
@@ -472,6 +473,12 @@ Nonce: ${nonce}`;
   const handleIssueAffiliateLink = useCallback(async () => {
     if (!publicKey || !signMessage) return;
 
+    // If referral link already exists, show modal immediately
+    if (referralLink) {
+      setShowReferralLinkModal(true);
+      return;
+    }
+
     try {
       // Generate nonce and timestamp
       const nonce = generateNonce();
@@ -506,11 +513,13 @@ Nonce: ${nonce}`;
       
       if (linkResult.success && linkResult.referral_link) {
         setReferralLink(linkResult.referral_link);
+        // Show modal with the referral link (whether new or existing)
+        setShowReferralLinkModal(true);
       }
     } catch (error) {
       console.error('Error issuing affiliate link:', error);
     }
-  }, [publicKey, signMessage]);
+  }, [publicKey, signMessage, referralLink]);
 
   // Attribute referral - REQUIRES SIGNATURE (user click only)
   const handleAttributeReferral = useCallback(async () => {
@@ -837,6 +846,46 @@ Nonce: ${nonce}`;
             )}
           </div>
         </section>
+      )}
+
+      {/* Referral Link Modal */}
+      {showReferralLinkModal && referralLink && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-lg w-full p-6">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-2xl font-bold">Your Referral Link</h2>
+              <button
+                onClick={() => setShowReferralLinkModal(false)}
+                className="text-gray-400 hover:text-white text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <p className="text-sm text-gray-300">
+                Share this link to earn referral bonuses. Each successful referral adds +1× to your allocation multiplier (max 3×).
+              </p>
+              
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={referralLink}
+                  className="flex-1 px-3 py-2 border border-gray-400 rounded bg-gray-800 text-white text-sm"
+                />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(referralLink);
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Learn More Modal */}
