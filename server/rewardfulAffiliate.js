@@ -51,18 +51,36 @@ export function markWalletActivated(wallet) {
  * @returns {Promise<{success: boolean, affiliateId?: string, referralLink?: string, error?: string}>}
  */
 export async function createRewardfulAffiliate(wallet) {
+  console.log('[REWARDFUL-AFFILIATE] Creating affiliate', {
+    wallet: wallet.slice(0, 8) + '...',
+  });
+
   // CRITICAL: Gate affiliate creation behind activation
   if (!isWalletActivated(wallet)) {
+    console.error('[REWARDFUL-AFFILIATE] Wallet not activated', {
+      wallet: wallet.slice(0, 8) + '...',
+      activatedWalletsCount: activatedWallets.size,
+    });
     return {
       success: false,
       error: 'Wallet must be activated via signature before affiliate creation',
     };
   }
+
+  console.log('[REWARDFUL-AFFILIATE] Wallet is activated', {
+    wallet: wallet.slice(0, 8) + '...',
+  });
+
   try {
     // Check if affiliate already exists
     if (walletAffiliateMap.has(wallet)) {
       const existingAffiliateId = walletAffiliateMap.get(wallet);
       const referralLink = `${process.env.FRONTEND_URL || 'https://yourdomain.com'}?via=${existingAffiliateId}`;
+      
+      console.log('[REWARDFUL-AFFILIATE] Existing affiliate found', {
+        wallet: wallet.slice(0, 8) + '...',
+        affiliateId: existingAffiliateId,
+      });
       
       return {
         success: true,
@@ -77,6 +95,9 @@ export async function createRewardfulAffiliate(wallet) {
     // API Secret (2124a8e1fa134b02f1005e2e655bcf58) is for backend API calls
     const rewardfulApiSecret = process.env.REWARDFUL_SECRET || process.env.REWARDFUL_API_SECRET;
     if (!rewardfulApiSecret) {
+      console.error('[REWARDFUL-AFFILIATE] API Secret not configured', {
+        wallet: wallet.slice(0, 8) + '...',
+      });
       return {
         success: false,
         error: 'REWARDFUL_SECRET not configured. Get your API Secret from https://app.rewardful.com/settings/api',
@@ -94,6 +115,11 @@ export async function createRewardfulAffiliate(wallet) {
       },
     };
 
+    console.log('[REWARDFUL-AFFILIATE] Calling Rewardful API', {
+      wallet: wallet.slice(0, 8) + '...',
+      email: affiliateData.email,
+    });
+
     // Create affiliate in Rewardful
     const response = await fetch('https://api.getrewardful.com/v1/affiliates', {
       method: 'POST',
@@ -104,9 +130,21 @@ export async function createRewardfulAffiliate(wallet) {
       body: JSON.stringify(affiliateData),
     });
 
+    console.log('[REWARDFUL-AFFILIATE] API response', {
+      wallet: wallet.slice(0, 8) + '...',
+      status: response.status,
+      statusText: response.statusText,
+    });
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Rewardful API error:', response.status, errorText);
+      console.error('[REWARDFUL-AFFILIATE] API error', {
+        wallet: wallet.slice(0, 8) + '...',
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        timestamp: new Date().toISOString(),
+      });
       return {
         success: false,
         error: `Rewardful API error: ${response.status} - ${errorText}`,
@@ -114,12 +152,21 @@ export async function createRewardfulAffiliate(wallet) {
     }
 
     const data = await response.json();
+    console.log('[REWARDFUL-AFFILIATE] API success', {
+      wallet: wallet.slice(0, 8) + '...',
+      affiliateId: data.id,
+      hasLinks: !!(data.links && data.links.length > 0),
+    });
     
     // Extract affiliate ID from response
     // Rewardful returns: { id: "aff_9xYkP3", links: [{ url: "..." }] }
     const affiliateId = data.id;
     
     if (!affiliateId) {
+      console.error('[REWARDFUL-AFFILIATE] No affiliate ID in response', {
+        wallet: wallet.slice(0, 8) + '...',
+        responseData: JSON.stringify(data).slice(0, 200),
+      });
       return {
         success: false,
         error: 'Rewardful API did not return affiliate ID',
@@ -128,17 +175,37 @@ export async function createRewardfulAffiliate(wallet) {
 
     // Store mapping (wallet → Rewardful affiliate ID)
     walletAffiliateMap.set(wallet, affiliateId);
+    console.log('[REWARDFUL-AFFILIATE] Mapping stored', {
+      wallet: wallet.slice(0, 8) + '...',
+      affiliateId,
+      totalMappings: walletAffiliateMap.size,
+    });
 
     // Generate referral link
     // Use the link from Rewardful if available, otherwise construct it
     let referralLink;
     if (data.links && data.links.length > 0 && data.links[0].url) {
       referralLink = data.links[0].url;
+      console.log('[REWARDFUL-AFFILIATE] Using Rewardful link', {
+        wallet: wallet.slice(0, 8) + '...',
+        referralLink,
+      });
     } else {
       // Fallback: construct link manually
       const frontendUrl = process.env.FRONTEND_URL || 'https://yourdomain.com';
       referralLink = `${frontendUrl}?via=${affiliateId}`;
+      console.log('[REWARDFUL-AFFILIATE] Constructed link', {
+        wallet: wallet.slice(0, 8) + '...',
+        referralLink,
+      });
     }
+
+    console.log('[REWARDFUL-AFFILIATE] Success', {
+      wallet: wallet.slice(0, 8) + '...',
+      affiliateId,
+      referralLink,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       success: true,
@@ -146,7 +213,12 @@ export async function createRewardfulAffiliate(wallet) {
       referralLink,
     };
   } catch (error) {
-    console.error('Rewardful affiliate creation error:', error);
+    console.error('[REWARDFUL-AFFILIATE] Error', {
+      wallet: wallet.slice(0, 8) + '...',
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString(),
+    });
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error',

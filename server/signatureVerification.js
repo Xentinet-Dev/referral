@@ -22,8 +22,19 @@ const SIGNATURE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
  */
 export function verifySignature(message, signature, publicKey) {
   try {
+    console.log('[SIGNATURE-VERIFY] Starting verification', {
+      publicKey: publicKey.slice(0, 8) + '...',
+      messageLength: message?.length,
+      signatureLength: signature?.length,
+    });
+
     // Basic validation
     if (!message || !signature || !publicKey) {
+      console.error('[SIGNATURE-VERIFY] Missing required fields', {
+        hasMessage: !!message,
+        hasSignature: !!signature,
+        hasPublicKey: !!publicKey,
+      });
       return false;
     }
 
@@ -31,8 +42,14 @@ export function verifySignature(message, signature, publicKey) {
     let signatureBytes;
     try {
       signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+      console.log('[SIGNATURE-VERIFY] Signature decoded', {
+        signatureLength: signatureBytes.length,
+      });
     } catch (error) {
-      console.error('Signature decode error:', error);
+      console.error('[SIGNATURE-VERIFY] Signature decode error', {
+        error: error.message,
+        stack: error.stack,
+      });
       return false;
     }
 
@@ -41,13 +58,23 @@ export function verifySignature(message, signature, publicKey) {
     try {
       const pubkey = new PublicKey(publicKey);
       publicKeyBytes = pubkey.toBytes();
+      console.log('[SIGNATURE-VERIFY] Public key validated', {
+        publicKeyLength: publicKeyBytes.length,
+      });
     } catch (error) {
-      console.error('Public key validation error:', error);
+      console.error('[SIGNATURE-VERIFY] Public key validation error', {
+        error: error.message,
+        stack: error.stack,
+        publicKey: publicKey.slice(0, 8) + '...',
+      });
       return false;
     }
 
     // Reconstruct the exact signed message
     const messageBytes = new TextEncoder().encode(message);
+    console.log('[SIGNATURE-VERIFY] Message encoded', {
+      messageLength: messageBytes.length,
+    });
 
     // CRITICAL: Cryptographically verify signature using tweetnacl
     const isValid = nacl.sign.detached.verify(
@@ -56,9 +83,18 @@ export function verifySignature(message, signature, publicKey) {
       publicKeyBytes
     );
 
+    console.log('[SIGNATURE-VERIFY] Verification result', {
+      isValid,
+      publicKey: publicKey.slice(0, 8) + '...',
+    });
+
     return isValid;
   } catch (error) {
-    console.error('Signature verification error:', error);
+    console.error('[SIGNATURE-VERIFY] Verification error', {
+      error: error.message,
+      stack: error.stack,
+      publicKey: publicKey?.slice(0, 8) + '...',
+    });
     return false;
   }
 }
@@ -71,8 +107,18 @@ export function verifySignature(message, signature, publicKey) {
  * @returns {{valid: boolean, error?: string}}
  */
 export function validateNonceAndTimestamp(nonce, timestamp) {
+  console.log('[NONCE-VALIDATE] Checking nonce and timestamp', {
+    nonce: nonce?.slice(0, 8) + '...',
+    timestamp,
+    usedNoncesCount: usedNonces.size,
+  });
+
   // Check if nonce was already used
   if (usedNonces.has(nonce)) {
+    console.error('[NONCE-VALIDATE] Replay attack detected', {
+      nonce: nonce.slice(0, 8) + '...',
+      timestamp: new Date().toISOString(),
+    });
     return { valid: false, error: 'Nonce already used (replay attack detected)' };
   }
 
@@ -80,13 +126,34 @@ export function validateNonceAndTimestamp(nonce, timestamp) {
   const now = Math.floor(Date.now() / 1000); // Convert to seconds
   const age = now - timestamp;
   
+  console.log('[NONCE-VALIDATE] Timestamp check', {
+    now,
+    timestamp,
+    age,
+    maxAge: SIGNATURE_TIMEOUT_MS / 1000,
+  });
+
   if (age > SIGNATURE_TIMEOUT_MS / 1000) {
+    console.error('[NONCE-VALIDATE] Timestamp expired', {
+      age,
+      maxAge: SIGNATURE_TIMEOUT_MS / 1000,
+      timestamp: new Date().toISOString(),
+    });
     return { valid: false, error: 'Signature too old (timestamp expired)' };
   }
 
   if (age < 0) {
+    console.error('[NONCE-VALIDATE] Future timestamp', {
+      age,
+      timestamp: new Date().toISOString(),
+    });
     return { valid: false, error: 'Invalid timestamp (future timestamp)' };
   }
+
+  console.log('[NONCE-VALIDATE] Valid', {
+    nonce: nonce.slice(0, 8) + '...',
+    age,
+  });
 
   return { valid: true };
 }
@@ -98,9 +165,16 @@ export function validateNonceAndTimestamp(nonce, timestamp) {
  */
 export function markNonceUsed(nonce) {
   usedNonces.add(nonce);
+  console.log('[NONCE-MARK] Nonce marked as used', {
+    nonce: nonce.slice(0, 8) + '...',
+    totalUsed: usedNonces.size,
+  });
   
   // Clean up old nonces periodically (in production, use TTL cache)
   if (usedNonces.size > 10000) {
+    console.warn('[NONCE-MARK] Clearing nonce cache (size limit reached)', {
+      previousSize: usedNonces.size,
+    });
     usedNonces.clear();
   }
 }
