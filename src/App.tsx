@@ -146,8 +146,9 @@ Nonce: ${nonce}`;
       if (result.validated) {
         setValidationStatus('validated');
         
-        // Automatically issue affiliate link after validation (requires another signature)
-        await handleIssueAffiliateLink();
+        // Note: Affiliate link issuance requires a separate signature
+        // User must click "Get Referral Link" button after validation
+        // This ensures explicit user consent for link issuance
         
         // Refresh referrer data
         const data = await getReferrerData(publicKey.toString());
@@ -351,7 +352,29 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Referral Link (Only after validation) */}
+      {/* Get Referral Link Button (After validation, requires signature) */}
+      {publicKey && validationStatus === 'validated' && !referralLink && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6 text-center">
+            <h2 className="text-lg font-semibold mb-4">Get Your Referral Link</h2>
+            <p className="text-sm text-gray-300 mb-4">
+              Your holdings are validated. Get your unique referral link to start earning bonuses.
+            </p>
+            <p className="text-xs text-gray-400 mb-4">
+              This action requires a wallet signature to authorize link issuance.
+            </p>
+            <button
+              onClick={handleIssueAffiliateLink}
+              disabled={!signMessage}
+              className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
+            >
+              Get Referral Link
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Referral Link Display (After issuance) */}
       {publicKey && validationStatus === 'validated' && referralLink && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
