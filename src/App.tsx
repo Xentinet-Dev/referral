@@ -157,6 +157,16 @@ Nonce: ${nonce}`;
       }
       const signedMessage = btoa(binary);
 
+      // DEBUG: Log exact values being sent
+      console.log('[VERIFY-FRONTEND]', {
+        wallet: publicKey.toString(),
+        nonce,
+        timestamp,
+        message,
+        messageLength: message.length,
+        messageBytes: Array.from(new TextEncoder().encode(message)),
+      });
+
       // Send to backend for verification
       // Use relative URL for Vercel serverless functions, or VITE_BACKEND_URL if set
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';

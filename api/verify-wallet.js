@@ -143,6 +143,16 @@ export default async function handler(req, res) {
       });
     }
 
+    // DEBUG: Log exact values received
+    console.log('[VERIFY-BACKEND]', {
+      wallet,
+      nonce,
+      timestamp,
+      message,
+      messageLength: message.length,
+      messageBytes: Array.from(new TextEncoder().encode(message)),
+    });
+
     console.log('[WALLET-AUTH-REQUEST]', {
       wallet: wallet.slice(0, 8) + '...',
       nonce: nonce.slice(0, 8) + '...',
