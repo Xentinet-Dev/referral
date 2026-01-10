@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { Analytics } from '@vercel/analytics/react';
 import {
   validateHoldings,
   issueAffiliateLink,
@@ -662,6 +663,9 @@ Nonce: ${nonce}`;
           Referral links are earned by validating holdings (≥ $2 USD). Each successful referral adds +1× to your allocation multiplier, up to a maximum of 3× total. All actions require wallet signatures for security.
         </p>
       </section>
+
+      {/* Vercel Web Analytics */}
+      <Analytics />
     </div>
   );
 }
