@@ -15,8 +15,9 @@ This system now creates Rewardful affiliates programmatically via API. Each vali
 Create or update `server/.env`:
 
 ```env
-# Rewardful API Key (REQUIRED)
-REWARDFUL_API_KEY=sk_live_YOUR_KEY_HERE
+# Rewardful API Secret (REQUIRED for backend API calls)
+# Get this from: https://app.rewardful.com/settings/api
+REWARDFUL_SECRET=YOUR_API_SECRET_HERE
 
 # Frontend URL (for generating referral links)
 FRONTEND_URL=https://yourdomain.com
@@ -27,6 +28,8 @@ PORT=3000
 # Optional: Stripe (for conversions)
 STRIPE_SECRET_KEY=sk_test_YOUR_KEY_HERE
 ```
+
+**Note**: The Rewardful API Key (shown in dashboard) is used in `index.html` for the frontend script. The API Secret is what you need for backend API calls.
 
 ## Step 3: Start Backend Server
 

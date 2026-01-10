@@ -36,12 +36,15 @@ export async function createRewardfulAffiliate(wallet) {
       };
     }
 
-    // Get Rewardful API key from environment
-    const rewardfulApiKey = process.env.REWARDFUL_API_KEY;
-    if (!rewardfulApiKey) {
+    // Get Rewardful API Secret from environment
+    // Rewardful API uses the SECRET for authentication (not the API Key)
+    // API Key (a97c5f) is for frontend script only
+    // API Secret (2124a8e1fa134b02f1005e2e655bcf58) is for backend API calls
+    const rewardfulApiSecret = process.env.REWARDFUL_SECRET || process.env.REWARDFUL_API_SECRET;
+    if (!rewardfulApiSecret) {
       return {
         success: false,
-        error: 'REWARDFUL_API_KEY not configured',
+        error: 'REWARDFUL_SECRET not configured. Get your API Secret from https://app.rewardful.com/settings/api',
       };
     }
 
@@ -60,7 +63,7 @@ export async function createRewardfulAffiliate(wallet) {
     const response = await fetch('https://api.getrewardful.com/v1/affiliates', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${rewardfulApiKey}`,
+        'Authorization': `Bearer ${rewardfulApiSecret}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(affiliateData),

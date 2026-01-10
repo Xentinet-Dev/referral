@@ -93,5 +93,5 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log(`Stripe key: ${process.env.STRIPE_SECRET_KEY ? 'Set ✓' : 'Missing ✗'}`);
-  console.log(`Rewardful key: ${process.env.REWARDFUL_API_KEY ? 'Set ✓' : 'Missing ✗'}`);
+  console.log(`Rewardful secret: ${process.env.REWARDFUL_SECRET ? 'Set ✓' : 'Missing ✗'}`);
 });
