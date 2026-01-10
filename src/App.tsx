@@ -244,7 +244,7 @@ Nonce: ${nonce}`;
             setActivationPending(false);
           }
         })
-        .catch(error => {
+        .catch(() => {
           setVerificationError('Failed to fetch nonce');
           setActivationPending(false);
         });
