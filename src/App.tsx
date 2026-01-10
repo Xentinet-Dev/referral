@@ -100,7 +100,14 @@ function App() {
         const encodedMessage = new TextEncoder().encode(message);
 
         const signature = await signMessage(encodedMessage);
-        const signedMessage = Buffer.from(signature).toString('base64');
+        // Convert Uint8Array to base64 (browser-compatible)
+        // Handle large arrays by chunking to avoid stack overflow
+        let binary = '';
+        const chunkSize = 8192;
+        for (let i = 0; i < signature.length; i += chunkSize) {
+          binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
+        }
+        const signedMessage = btoa(binary);
 
         // Send to backend
         const response = await recordAttribution({
