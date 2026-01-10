@@ -1,33 +1,39 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
-  recordAttribution,
-  getAttribution,
-  getReferrals,
-  verifyBuy,
-  getBuyVerification,
+  validateHoldings,
+  issueAffiliateLink,
+  attributeReferral,
+  validateReferredWallet,
+  getReferrerData,
 } from './mockBackend';
 
 // Constants
-const COUNTDOWN_END_UTC = new Date('2024-12-31T23:59:59Z').getTime(); // Fixed UTC end timestamp
-const TOKEN_MINT = 'So11111111111111111111111111111111111111112'; // Mock token mint (replace with actual)
-const TOKEN_PRICE_USD = 0.5; // Mock price constant (replace with actual)
-const QUALIFICATION_THRESHOLD_USD = 2.0;
-const BONUS_THRESHOLD = 3; // 3 qualified buyers needed for bonus
+const COUNTDOWN_END_UTC = new Date('2024-12-31T23:59:59Z').getTime();
+const VALIDATION_THRESHOLD_USD = 2.0;
 
 function App() {
-  const { publicKey, signMessage } = useWallet();
-  const { connection } = useConnection();
+  const { publicKey } = useWallet();
   const [countdown, setCountdown] = useState<number>(0);
-  const [referrerWallet, setReferrerWallet] = useState<string | null>(null);
-  const [attributionComplete, setAttributionComplete] = useState(false);
-  const [tokenBalance, setTokenBalance] = useState<number>(0);
-  const [usdValue, setUsdValue] = useState<number>(0);
-  const [buyVerified, setBuyVerified] = useState<boolean | null>(null);
-  const [referrals, setReferrals] = useState<string[]>([]);
-  const [qualifiedBuyers, setQualifiedBuyers] = useState<number>(0);
-  const [copied, setCopied] = useState(false);
+  
+  // Validation state
+  const [validationStatus, setValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  
+  // Referral link state
+  const [referralLink, setReferralLink] = useState<string | null>(null);
+  
+  // Referrer data
+  const [referrerData, setReferrerData] = useState<{
+    successful_referrals: number;
+    allocation_multiplier: number;
+    max_bonus_reached: boolean;
+  } | null>(null);
+  
+  // Referred user state
+  const [affiliateIdFromUrl, setAffiliateIdFromUrl] = useState<string | null>(null);
+  const [referredValidationStatus, setReferredValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
 
   // Countdown timer
   useEffect(() => {
@@ -52,203 +58,127 @@ function App() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  // Read referral from URL and store in sessionStorage
+  // Check for ?via= parameter (referred user)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const refParam = urlParams.get('ref');
-
-    if (refParam) {
-      const stored = sessionStorage.getItem('referrer_wallet');
-      // Never overwrite existing stored referrer
-      if (!stored) {
-        sessionStorage.setItem('referrer_wallet', refParam);
-        setReferrerWallet(refParam);
-      } else {
-        setReferrerWallet(stored);
-      }
-    } else {
-      // Check if already stored
-      const stored = sessionStorage.getItem('referrer_wallet');
-      if (stored) {
-        setReferrerWallet(stored);
-      }
+    const viaParam = urlParams.get('via');
+    if (viaParam) {
+      setAffiliateIdFromUrl(viaParam);
     }
   }, []);
 
-  // Handle referral attribution on first wallet connect
+  // Attribute referral when wallet connects and ?via= is present
   useEffect(() => {
     const handleAttribution = async () => {
-      if (
-        !publicKey ||
-        !referrerWallet ||
-        attributionComplete ||
-        !signMessage
-      ) {
-        return;
-      }
+      if (!publicKey || !affiliateIdFromUrl) return;
 
       try {
-        // Check if already attributed
-        const existing = await getAttribution(publicKey.toString());
-        if (existing.referrer) {
-          setAttributionComplete(true);
-          return;
-        }
-
-        // Prompt user to sign message
-        const message = `I entered via referral from: ${referrerWallet}`;
-        const encodedMessage = new TextEncoder().encode(message);
-
-        const signature = await signMessage(encodedMessage);
-        // Convert Uint8Array to base64 (browser-compatible)
-        // Handle large arrays by chunking to avoid stack overflow
-        let binary = '';
-        const chunkSize = 8192;
-        for (let i = 0; i < signature.length; i += chunkSize) {
-          binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
-        }
-        const signedMessage = btoa(binary);
-
-        // Send to backend
-        const response = await recordAttribution({
+        await attributeReferral({
           referred_wallet: publicKey.toString(),
-          referrer_wallet: referrerWallet,
-          signed_message: signedMessage,
+          affiliate_id: affiliateIdFromUrl,
         });
-
-        if (response.success) {
-          setAttributionComplete(true);
-        }
       } catch (error) {
         console.error('Attribution error:', error);
       }
     };
 
     handleAttribution();
-  }, [publicKey, referrerWallet, attributionComplete, signMessage]);
+  }, [publicKey, affiliateIdFromUrl]);
 
-  // Fetch token balance and calculate USD value
+  // Fetch referrer data when wallet connects
   useEffect(() => {
-    const fetchTokenBalance = async () => {
-      if (!publicKey || !connection) return;
-
-      try {
-        // Mock token balance fetch
-        // In production, replace with actual SPL token balance check
-        const mockBalance = Math.random() * 10; // Mock for demonstration
-        setTokenBalance(mockBalance);
-        setUsdValue(mockBalance * TOKEN_PRICE_USD);
-
-        // Real implementation would be:
-        // const tokenAccount = await getAccount(connection, tokenAccountPubkey);
-        // const mintInfo = await getMint(connection, new PublicKey(TOKEN_MINT));
-        // const balance = Number(tokenAccount.amount) / Math.pow(10, mintInfo.decimals);
-      } catch (error) {
-        console.error('Token balance error:', error);
-      }
-    };
-
-    fetchTokenBalance();
-    // Poll every 10 seconds (minimum)
-    const interval = setInterval(fetchTokenBalance, 10000);
-    return () => clearInterval(interval);
-  }, [publicKey, connection]);
-
-  // Check buy verification status (for referred users only)
-  // Once verified → permanently true, no re-checking
-  useEffect(() => {
-    const checkBuyVerification = async () => {
-      if (!publicKey || !referrerWallet) return;
-
-      // If already verified, stop checking
-      if (buyVerified === true) return;
-
-      try {
-        // First check if already verified in backend
-        const verification = await getBuyVerification(publicKey.toString());
-        if (verification.verified) {
-          setBuyVerified(true);
-          return;
-        }
-
-        // Only attempt verification if not already verified
-        // and countdown window is still active
-        if (countdown > 0) {
-          // Window starts from when countdown began
-          // countdown = COUNTDOWN_END_UTC - now
-          // So window_start = COUNTDOWN_END_UTC - countdown = now
-          // For practical purposes, use a fixed window start (30 days before end)
-          // In production, this should be the actual campaign start time
-          const windowStart = COUNTDOWN_END_UTC - (30 * 24 * 60 * 60 * 1000); // 30 days before end
-          const result = await verifyBuy({
-            wallet: publicKey.toString(),
-            token_mint: TOKEN_MINT,
-            window_start: windowStart,
-            window_end: COUNTDOWN_END_UTC,
-          });
-          
-          if (result.verified) {
-            setBuyVerified(true);
-            return; // Stop polling once verified
-          }
-        }
-      } catch (error) {
-        console.error('Buy verification error:', error);
-      }
-    };
-
-    if (referrerWallet && publicKey && buyVerified !== true) {
-      checkBuyVerification();
-      // Poll every 10 seconds (minimum) until verified
-      const interval = setInterval(checkBuyVerification, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [publicKey, referrerWallet, countdown, buyVerified]);
-
-  // Fetch referral stats
-  useEffect(() => {
-    const fetchReferralStats = async () => {
+    const fetchReferrerData = async () => {
       if (!publicKey) return;
 
       try {
-        const refs = await getReferrals(publicKey.toString());
-        setReferrals(refs);
-
-        // Count qualified buyers
-        let qualified = 0;
-        for (const wallet of refs) {
-          const verification = await getBuyVerification(wallet);
-          if (verification.verified) {
-            qualified++;
+        const data = await getReferrerData(publicKey.toString());
+        
+        if (data.validated) {
+          setValidationStatus('validated');
+          
+          if (data.affiliate_id) {
+            setReferralLink(`${window.location.origin}${window.location.pathname}?via=${data.affiliate_id}`);
           }
         }
-        setQualifiedBuyers(qualified);
+
+        if (data.allocation_multiplier) {
+          setReferrerData({
+            successful_referrals: data.allocation_multiplier.successful_referrals,
+            allocation_multiplier: data.allocation_multiplier.total_multiplier,
+            max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
+          });
+        }
       } catch (error) {
-        console.error('Referral stats error:', error);
+        console.error('Error fetching referrer data:', error);
       }
     };
 
-    if (publicKey) {
-      fetchReferralStats();
-      // Poll every 10 seconds
-      const interval = setInterval(fetchReferralStats, 10000);
-      return () => clearInterval(interval);
+    fetchReferrerData();
+  }, [publicKey]);
+
+  // Validate holdings
+  const handleValidateHoldings = useCallback(async () => {
+    if (!publicKey) return;
+
+    setValidationStatus('checking');
+    setValidationError(null);
+
+    try {
+      const result = await validateHoldings(publicKey.toString());
+      
+      if (result.validated) {
+        setValidationStatus('validated');
+        
+        // Automatically issue affiliate link after validation
+        const linkResult = await issueAffiliateLink(publicKey.toString());
+        if (linkResult.success && linkResult.referral_link) {
+          setReferralLink(linkResult.referral_link);
+        }
+        
+        // Refresh referrer data
+        const data = await getReferrerData(publicKey.toString());
+        if (data.allocation_multiplier) {
+          setReferrerData({
+            successful_referrals: data.allocation_multiplier.successful_referrals,
+            allocation_multiplier: data.allocation_multiplier.total_multiplier,
+            max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
+          });
+        }
+      } else {
+        setValidationStatus('failed');
+        setValidationError(result.error || 'Validation failed');
+      }
+    } catch (error) {
+      setValidationStatus('failed');
+      setValidationError(error instanceof Error ? error.message : 'Validation error');
     }
   }, [publicKey]);
 
+  // Validate referred wallet (for users who came via ?via=)
+  const handleValidateReferredWallet = useCallback(async () => {
+    if (!publicKey || !affiliateIdFromUrl) return;
+
+    setReferredValidationStatus('checking');
+
+    try {
+      const result = await validateReferredWallet(publicKey.toString());
+      
+      if (result.validated) {
+        setReferredValidationStatus('validated');
+      } else {
+        setReferredValidationStatus('failed');
+      }
+    } catch (error) {
+      setReferredValidationStatus('failed');
+      console.error('Referred wallet validation error:', error);
+    }
+  }, [publicKey, affiliateIdFromUrl]);
+
   // Copy referral link
   const handleCopyLink = useCallback(() => {
-    if (!publicKey) return;
-
-    const link = `${window.location.origin}${window.location.pathname}?ref=${publicKey.toString()}`;
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }, [publicKey]);
-
-  // Qualification status
-  const isQualified = usdValue >= QUALIFICATION_THRESHOLD_USD;
-  const bonusEligible = qualifiedBuyers >= BONUS_THRESHOLD;
+    if (!referralLink) return;
+    navigator.clipboard.writeText(referralLink);
+  }, [referralLink]);
 
   // Truncate wallet address
   const truncateAddress = (address: string): string => {
@@ -287,78 +217,110 @@ function App() {
         )}
       </section>
 
-      {/* Referral Link Section */}
-      {publicKey && (
+      {/* Validation Gate - Primary CTA */}
+      {publicKey && validationStatus !== 'validated' && (
         <section className="mb-8">
-          <label className="block text-sm font-medium mb-2">
-            Your Referral Link
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              readOnly
-              value={`${window.location.origin}${window.location.pathname}?ref=${publicKey.toString()}`}
-              className="flex-1 px-3 py-2 border border-gray-400 rounded bg-gray-900 bg-opacity-50 text-white text-sm"
-            />
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6 text-center">
+            <h2 className="text-xl font-semibold mb-4">
+              Validate Holdings + Obtain Referral Link
+            </h2>
+            <p className="text-sm text-gray-300 mb-4">
+              You must hold ≥ ${VALIDATION_THRESHOLD_USD} USD worth of the countdown token to receive a referral link.
+            </p>
+            {validationStatus === 'checking' && (
+              <p className="text-sm text-gray-400 mb-4">Validating holdings...</p>
+            )}
+            {validationStatus === 'failed' && validationError && (
+              <p className="text-sm text-red-400 mb-4">{validationError}</p>
+            )}
             <button
-              onClick={handleCopyLink}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+              onClick={handleValidateHoldings}
+              disabled={validationStatus === 'checking'}
+              className="px-6 py-3 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
             >
-              {copied ? 'Copied' : 'Copy'}
+              {validationStatus === 'checking' ? 'Validating...' : 'Validate Holdings'}
             </button>
           </div>
         </section>
       )}
 
-      {/* Token Qualification Status */}
-      <section className="mb-8">
-        <h2 className="text-lg font-semibold mb-2">Token Qualification Status</h2>
-        <div className="space-y-1 text-sm text-white">
-          <p>Countdown token balance: {tokenBalance.toFixed(4)}</p>
-          <p>USD value: ${usdValue.toFixed(2)}</p>
-          <p className="font-medium">
-            Qualification state:{' '}
-            {isQualified ? (
-              <span className="text-green-400">Qualified for Snapshot</span>
-            ) : (
-              <span className="text-red-400">Not Qualified</span>
-            )}
-          </p>
-        </div>
-      </section>
-
-      {/* Buy Verification Status (Referred Users Only) */}
-      {referrerWallet && publicKey && (
+      {/* Referral Link (Only after validation) */}
+      {publicKey && validationStatus === 'validated' && referralLink && (
         <section className="mb-8">
-          <h2 className="text-lg font-semibold mb-2">Buy Verification Status</h2>
-          <p className="text-sm text-white">
-            Buy Verified:{' '}
-            {buyVerified === null ? (
-              <span className="text-gray-300">Checking...</span>
-            ) : buyVerified ? (
-              <span className="text-green-400">Yes</span>
-            ) : (
-              <span className="text-red-400">No</span>
-            )}
-          </p>
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-lg font-semibold mb-4">Your Referral Link</h2>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                readOnly
+                value={referralLink}
+                className="flex-1 px-3 py-2 border border-gray-400 rounded bg-gray-800 text-white text-sm"
+              />
+              <button
+                onClick={handleCopyLink}
+                className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+              >
+                Copy
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              Share this link to earn referral bonuses. Each successful referral adds +1× to your allocation multiplier (max 3×).
+            </p>
+          </div>
         </section>
       )}
 
-      {/* Referral Progress */}
-      {publicKey && (
+      {/* Allocation Multiplier */}
+      {publicKey && validationStatus === 'validated' && referrerData && (
         <section className="mb-8">
-          <h2 className="text-lg font-semibold mb-2">Referral Progress</h2>
-          <div className="space-y-1 text-sm text-white">
-            <p>Total Referrals: {referrals.length}</p>
-            <p>Qualified Buyers: {qualifiedBuyers}</p>
-            <p className="font-medium">
-              Bonus Eligible:{' '}
-              {bonusEligible ? (
-                <span className="text-green-400">Yes</span>
-              ) : (
-                <span className="text-red-400">No</span>
-              )}
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-lg font-semibold mb-4">Allocation Multiplier</h2>
+            <div className="space-y-2 text-sm">
+              <p className="text-white">
+                Base multiplier: <span className="font-semibold">2×</span>
+              </p>
+              <p className="text-white">
+                Referral bonus: <span className="font-semibold">+{referrerData.successful_referrals}×</span>
+                {referrerData.max_bonus_reached && (
+                  <span className="text-yellow-400 ml-2">(Max reached)</span>
+                )}
+              </p>
+              <p className="text-lg font-bold text-green-400">
+                Total: {referrerData.allocation_multiplier}×
+              </p>
+              <p className="text-xs text-gray-400 mt-2">
+                Successful referrals: {referrerData.successful_referrals} / 3
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Referred User Section */}
+      {publicKey && affiliateIdFromUrl && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-lg font-semibold mb-4">Referred User</h2>
+            <p className="text-sm text-gray-300 mb-4">
+              You arrived via a referral link. Validate your holdings to count as a successful referral.
             </p>
+            {referredValidationStatus === 'idle' && (
+              <button
+                onClick={handleValidateReferredWallet}
+                className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700 font-medium"
+              >
+                Validate Holdings
+              </button>
+            )}
+            {referredValidationStatus === 'checking' && (
+              <p className="text-sm text-gray-400">Validating...</p>
+            )}
+            {referredValidationStatus === 'validated' && (
+              <p className="text-sm text-green-400">✓ Validated - You count as a successful referral!</p>
+            )}
+            {referredValidationStatus === 'failed' && (
+              <p className="text-sm text-red-400">Validation failed - You must hold ≥ ${VALIDATION_THRESHOLD_USD} USD worth of token.</p>
+            )}
           </div>
         </section>
       )}
@@ -366,8 +328,7 @@ function App() {
       {/* Simple Explanation */}
       <section className="mt-12 pt-8 border-t border-gray-400 border-opacity-50">
         <p className="text-sm text-gray-200">
-          A referral is counted when a referred wallet acquires at least $2 worth of the token during the active window.
-          Transfers and airdrops do not qualify.
+          Referral links are earned by validating holdings (≥ $2 USD). Each successful referral adds +1× to your allocation multiplier, up to a maximum of 3× total.
         </p>
       </section>
     </div>

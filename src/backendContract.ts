@@ -1,219 +1,205 @@
 /**
  * BACKEND CONTRACT INTERFACE
  * 
- * This file defines the formal contract for backend API endpoints.
- * The mockBackend.ts implements this contract with in-memory storage.
+ * Validation-Gated Referral System
  * 
- * In production, replace mockBackend.ts calls with actual HTTP requests to these endpoints.
+ * Core Rules:
+ * - Referral links are earned, not automatic
+ * - Users must validate holdings (≥ $2) before getting a link
+ * - One wallet = one affiliate ID (immutable)
+ * - Allocation multiplier: 2× base + up to 3× bonus (1× per referral, max 3×)
  */
 
 // ============================================================================
-// ATTRIBUTION ENDPOINTS
+// HOLDINGS VALIDATION
 // ============================================================================
 
-export interface AttributionRequest {
-  referred_wallet: string;
-  referrer_wallet: string;
-  signed_message: string;
-  rewardful_affiliate_id?: string; // Optional: captured from Rewardful cookie
+export interface ValidationResult {
+  validated: boolean;
+  usd_value: number; // USD value at time of validation (locked)
+  validated_at: number | null;
+  error?: string;
 }
 
-export interface AttributionResponse {
+/**
+ * POST /api/validate-holdings
+ * 
+ * Validates that a wallet holds ≥ $2 USD worth of the countdown token.
+ * 
+ * Rules:
+ * - Checks SPL token balance for the countdown token
+ * - USD value ≥ $2 (calculated at acquisition time)
+ * - Balance must be acquired via purchase, not transfer or airdrop
+ * - Validation result is locked permanently (write-once)
+ * - If < $2 → validation fails
+ * - If ≥ $2 → validation succeeds
+ */
+export type ValidateHoldingsFunction = (
+  wallet: string
+) => Promise<ValidationResult>;
+
+// ============================================================================
+// AFFILIATE LINK ISSUANCE
+// ============================================================================
+
+export interface AffiliateLinkResponse {
+  success: boolean;
+  affiliate_id: string | null;
+  referral_link: string | null;
+  error?: string;
+}
+
+/**
+ * POST /api/issue-affiliate-link
+ * 
+ * Issues a unique affiliate link to a validated wallet.
+ * 
+ * Rules:
+ * - Wallet must be validated first (validateHoldings must return validated: true)
+ * - One wallet = one affiliate ID (immutable)
+ * - Affiliate ID never changes
+ * - No regeneration
+ * - No manual override
+ * - If already issued, returns existing affiliate_id
+ */
+export type IssueAffiliateLinkFunction = (
+  wallet: string
+) => Promise<AffiliateLinkResponse>;
+
+// ============================================================================
+// REFERRAL ATTRIBUTION
+// ============================================================================
+
+export interface AttributeReferralRequest {
+  referred_wallet: string;
+  affiliate_id: string; // From ?via= parameter
+}
+
+export interface AttributeReferralResponse {
   success: boolean;
   message: string;
   is_self_referral?: boolean;
   already_attributed?: boolean;
-  rewardful_affiliate_id?: string; // Returned if mapped
 }
 
 /**
- * POST /api/attribution
+ * POST /api/attribute-referral
  * 
- * Records referral attribution.
+ * Attributes a referral to an affiliate when a new user visits via link.
  * 
  * Rules:
- * - First referral wins (immutable)
+ * - URL contains ?via=<affiliate_id>
+ * - Rewardful captures visit
+ * - First affiliate wins (immutable)
+ * - Attribution is immutable
  * - Self-referrals are rejected
- * - Attribution cannot be overwritten
- * - If rewardful_affiliate_id provided, maps wallet → affiliate_id (first wins, immutable)
  */
 export type AttributeReferralFunction = (
-  request: AttributionRequest
-) => Promise<AttributionResponse>;
-
-/**
- * GET /api/attribution/:wallet
- * 
- * Returns attribution data for a wallet.
- */
-export interface AttributionData {
-  referrer: string | null;
-  timestamp: number | null;
-  rewardful_affiliate_id: string | null;
-}
-
-export type GetAttributionFunction = (
-  wallet: string
-) => Promise<AttributionData>;
+  request: AttributeReferralRequest
+) => Promise<AttributeReferralResponse>;
 
 // ============================================================================
-// BUY VERIFICATION ENDPOINTS
+// REFEREE VALIDATION
 // ============================================================================
 
-export interface BuyVerificationRequest {
-  wallet: string;
-  token_mint: string;
-  window_start: number;
-  window_end: number;
-}
-
-export interface BuyVerificationResponse {
-  verified: boolean;
-  usd_value?: number; // USD value at time of purchase (locked once verified)
-  transaction_signature?: string;
-  verified_at?: number; // Timestamp when verification occurred
-}
-
 /**
- * POST /api/verify-buy
+ * POST /api/validate-referred-wallet
  * 
- * Verifies if a wallet has made a qualifying purchase.
+ * Validates that a referred wallet has acquired ≥ $2 USD worth of token.
  * 
  * Rules:
- * - Scans Solana transactions for SOL outflow + SPL token inflow
- * - Must be in same transaction
- * - Must occur within window_start and window_end
- * - USD value calculated at time of purchase (uses price oracle)
- * - Must be ≥ $2 USD
- * - Once verified → permanently true (write-once)
- * - Result is cached and never re-evaluated
+ * - Referred wallet must connect
+ * - Must acquire ≥ $2 USD worth of token
+ * - Must pass on-chain validation
+ * - Transfers and airdrops do not qualify
+ * - Once validated → permanently true (write-once)
  */
-export type VerifyBuyFunction = (
-  request: BuyVerificationRequest
-) => Promise<BuyVerificationResponse>;
+export type ValidateReferredWalletFunction = (
+  wallet: string
+) => Promise<ValidationResult>;
 
 /**
- * GET /api/buy-verification/:wallet
+ * POST /api/increment-referral-count
  * 
- * Returns buy verification status for a wallet.
- * Returns cached result if already verified.
+ * Increments successful_referrals_count for a referrer.
+ * 
+ * Rules:
+ * - Called when a referred wallet is validated
+ * - Increments referrer's successful_referrals_count
+ * - Only counts validated referees
+ * - Immutable (cannot decrease)
  */
-export type GetBuyVerificationFunction = (
-  wallet: string
-) => Promise<BuyVerificationResponse>;
+export type IncrementReferralCountFunction = (
+  referrer_wallet: string
+) => Promise<{ success: boolean; new_count: number }>;
 
 // ============================================================================
-// REFERRAL PROGRESS ENDPOINTS
+// ALLOCATION MULTIPLIER
 // ============================================================================
+
+export interface AllocationMultiplierResponse {
+  base_multiplier: number; // Always 2×
+  bonus_multiplier: number; // 0-3× (1× per successful referral)
+  total_multiplier: number; // base + bonus (max 3×)
+  successful_referrals: number;
+  max_bonus_reached: boolean;
+}
+
+/**
+ * GET /api/allocation-multiplier/:wallet
+ * 
+ * Calculates allocation multiplier for a wallet.
+ * 
+ * Rules:
+ * - Base allocation: 2× (all validated holders)
+ * - Referral bonus: +1× per successful referee
+ * - Maximum bonus: 3× (caps at 3 successful referrals)
+ * - Extra referrals beyond 3 do nothing
+ * - Multiplier is locked at snapshot time
+ */
+export type CalculateAllocationMultiplierFunction = (
+  wallet: string
+) => Promise<AllocationMultiplierResponse>;
+
+// ============================================================================
+// REFERRER DATA
+// ============================================================================
+
+export interface ReferrerData {
+  wallet_address: string;
+  affiliate_id: string | null;
+  validated: boolean;
+  validated_at: number | null;
+  successful_referrals_count: number;
+  allocation_multiplier: AllocationMultiplierResponse | null;
+}
+
+/**
+ * GET /api/referrer/:wallet
+ * 
+ * Returns complete referrer data for a wallet.
+ */
+export type GetReferrerDataFunction = (
+  wallet: string
+) => Promise<ReferrerData>;
+
+// ============================================================================
+// REFERRAL MAPPING
+// ============================================================================
+
+export interface ReferralMapping {
+  affiliate_id: string;
+  referrer_wallet: string;
+  referred_wallet: string;
+  referred_validated: boolean;
+  validated_at: number | null;
+}
 
 /**
  * GET /api/referrals/:wallet
  * 
- * Returns all wallets that were referred by the given wallet.
+ * Returns all referrals for a referrer wallet.
  */
 export type GetReferralsFunction = (
   referrer_wallet: string
-) => Promise<string[]>;
-
-/**
- * GET /api/referral-progress/:wallet
- * 
- * Returns comprehensive referral progress for a wallet.
- */
-export interface ReferralProgress {
-  total_referrals: number;
-  qualified_buyers: number;
-  bonus_eligible: boolean; // true if qualified_buyers >= threshold
-  referrals: string[]; // List of referred wallet addresses
-}
-
-export type GetReferralProgressFunction = (
-  wallet: string
-) => Promise<ReferralProgress>;
-
-// ============================================================================
-// QUALIFICATION LOCK ENDPOINT
-// ============================================================================
-
-/**
- * POST /api/lock-qualification
- * 
- * Locks qualification status for a wallet (snapshot).
- * 
- * Rules:
- * - Can only be called once per wallet
- * - Locks current qualification state
- * - Used for final snapshot at countdown end
- */
-export interface LockQualificationRequest {
-  wallet: string;
-}
-
-export interface LockQualificationResponse {
-  success: boolean;
-  qualified: boolean;
-  usd_value: number;
-  locked_at: number;
-}
-
-export type LockQualificationFunction = (
-  request: LockQualificationRequest
-) => Promise<LockQualificationResponse>;
-
-// ============================================================================
-// REWARDFUL AFFILIATE MAPPING
-// ============================================================================
-
-/**
- * Internal storage structure for wallet → affiliate_id mapping
- * 
- * Rules:
- * - First affiliate ID wins (immutable)
- * - Wallet → affiliate_id is one-to-one
- * - Never overwritten once set
- */
-export interface WalletAffiliateMapping {
-  wallet: string;
-  rewardful_affiliate_id: string;
-  mapped_at: number;
-}
-
-/**
- * GET /api/affiliate-mapping/:wallet
- * 
- * Returns Rewardful affiliate ID for a wallet (if mapped).
- */
-export type GetAffiliateMappingFunction = (
-  wallet: string
-) => Promise<{ rewardful_affiliate_id: string | null }>;
-
-// ============================================================================
-// STRIPE CONVERSION TRIGGER
-// ============================================================================
-
-/**
- * POST /api/trigger-conversion
- * 
- * Triggers a Stripe payment event for Rewardful attribution.
- * 
- * Rules:
- * - Creates $0 or $2 test-mode Stripe payment
- * - Associates with wallet/customer
- * - Rewardful cookie/session automatically attached
- * - Used when buy verified OR referral bonus condition met
- */
-export interface TriggerConversionRequest {
-  wallet: string;
-  amount_usd: number; // 0 for free conversion, 2 for actual purchase
-  conversion_type: 'buy_verified' | 'referral_bonus';
-}
-
-export interface TriggerConversionResponse {
-  success: boolean;
-  stripe_payment_id?: string;
-  rewardful_conversion_id?: string;
-}
-
-export type TriggerConversionFunction = (
-  request: TriggerConversionRequest
-) => Promise<TriggerConversionResponse>;
+) => Promise<ReferralMapping[]>;
