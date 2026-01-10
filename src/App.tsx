@@ -19,7 +19,7 @@ function generateNonce(): string {
 }
 
 function App() {
-  const { publicKey, signMessage } = useWallet();
+  const { publicKey, signMessage, wallet, disconnect, connected } = useWallet();
   const [countdown, setCountdown] = useState<number>(0);
   
   // Validation state
@@ -40,6 +40,17 @@ function App() {
   const [affiliateIdFromUrl, setAffiliateIdFromUrl] = useState<string | null>(null);
   const [referredValidationStatus, setReferredValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
   const [attributionComplete, setAttributionComplete] = useState(false);
+
+  // CRITICAL: Force disconnect on mount - enforce stateless sessions
+  // This ensures no cached wallet sessions persist across page reloads
+  useEffect(() => {
+    if (connected && wallet) {
+      // Immediately disconnect any auto-connected wallet
+      disconnect().catch((error) => {
+        console.error('Error disconnecting wallet on mount:', error);
+      });
+    }
+  }, []); // Run only once on mount
 
   // Countdown timer
   useEffect(() => {
@@ -73,14 +84,18 @@ function App() {
     }
   }, []);
 
-  // Fetch referrer data when wallet connects - NO SIGNING HERE
+  // Fetch referrer data when wallet connects - NO SIGNING HERE, READ-ONLY
+  // This only fetches display data, does NOT authorize any actions
   useEffect(() => {
     const fetchReferrerData = async () => {
-      if (!publicKey) return;
+      // Only fetch if wallet is explicitly connected (not auto-connected)
+      // The forced disconnect on mount ensures we only get here after user clicks "Connect"
+      if (!publicKey || !connected) return;
 
       try {
         const data = await getReferrerData(publicKey.toString());
         
+        // Display existing state (read-only, no authorization implied)
         if (data.validated) {
           setValidationStatus('validated');
           
@@ -102,7 +117,7 @@ function App() {
     };
 
     fetchReferrerData();
-  }, [publicKey]);
+  }, [publicKey, connected]);
 
   // Validate holdings - REQUIRES SIGNATURE (user click only)
   const handleValidateHoldings = useCallback(async () => {
