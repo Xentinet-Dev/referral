@@ -26,7 +26,18 @@ CREATE TABLE IF NOT EXISTS wallet_affiliates (
 CREATE INDEX IF NOT EXISTS idx_wallet_affiliates_wallet ON wallet_affiliates(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_wallet_affiliates_affiliate ON wallet_affiliates(affiliate_id);
 
--- Table 3: Rewardful Conversions
+-- Table 3: Nonces
+-- Stores nonces for wallet verification with expiration
+CREATE TABLE IF NOT EXISTS nonces (
+  nonce TEXT PRIMARY KEY,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for cleanup of expired nonces
+CREATE INDEX IF NOT EXISTS idx_nonces_expires_at ON nonces(expires_at);
+
+-- Table 4: Rewardful Conversions
 -- Tracks processed referral conversions for idempotency and referral counts
 CREATE TABLE IF NOT EXISTS rewardful_conversions (
   referral_id TEXT PRIMARY KEY,
@@ -47,6 +58,7 @@ CREATE INDEX IF NOT EXISTS idx_rewardful_conversions_wallet_count ON rewardful_c
 -- Enable Row Level Security (RLS) - API routes use service role key, so this is for safety
 ALTER TABLE wallet_activation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallet_affiliates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nonces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rewardful_conversions ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Service role can do everything (used by API routes)
@@ -54,6 +66,9 @@ CREATE POLICY "Service role full access wallet_activation" ON wallet_activation
   FOR ALL USING (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access wallet_affiliates" ON wallet_affiliates
+  FOR ALL USING (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access nonces" ON nonces
   FOR ALL USING (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access rewardful_conversions" ON rewardful_conversions

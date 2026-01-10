@@ -25,26 +25,48 @@ const supabase = supabaseUrl && supabaseServiceKey
 
 const SIGNATURE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-/**
- * Check if nonce has been used (query Supabase)
- * For MVP, we'll use a simple approach - in production, add nonces table
- */
-const usedNonces = new Set(); // TODO: Move to Supabase nonces table
-
-function verifyWalletActivation(wallet, message, signature, nonce, timestamp) {
-  // Check nonce (in-memory for MVP, should be in Supabase)
-  if (usedNonces.has(nonce)) {
-    return { valid: false, error: 'Nonce already used' };
+async function verifyAndConsumeNonce(nonce) {
+  if (!supabase) {
+    return { valid: false, code: 'NONCE_INVALID', message: 'Supabase not configured' };
   }
 
-  // Check timestamp
-  const now = Date.now();
-  const requestTime = timestamp * 1000;
-  if (now - requestTime > SIGNATURE_TIMEOUT_MS) {
-    return { valid: false, error: 'Timestamp expired' };
-  }
+  try {
+    const { data, error } = await supabase
+      .from('nonces')
+      .select('nonce, expires_at')
+      .eq('nonce', nonce)
+      .single();
 
-  // Verify signature cryptographically
+    if (error || !data) {
+      return { valid: false, code: 'NONCE_INVALID', message: 'Nonce not found' };
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(data.expires_at);
+
+    if (now > expiresAt) {
+      await supabase
+        .from('nonces')
+        .delete()
+        .eq('nonce', nonce);
+      return { valid: false, code: 'NONCE_EXPIRED', message: 'Nonce expired' };
+    }
+
+    await supabase
+      .from('nonces')
+      .delete()
+      .eq('nonce', nonce);
+
+    return { valid: true };
+  } catch (error) {
+    console.error('[VERIFY-WALLET] Error verifying nonce', {
+      error: error.message,
+    });
+    return { valid: false, code: 'NONCE_INVALID', message: 'Nonce verification failed' };
+  }
+}
+
+function verifySignature(wallet, message, signature) {
   try {
     const signatureBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
     const publicKeyBytes = new PublicKey(wallet).toBytes();
@@ -53,14 +75,12 @@ function verifyWalletActivation(wallet, message, signature, nonce, timestamp) {
     const isValid = nacl.sign.detached.verify(messageBytes, signatureBytes, publicKeyBytes);
     
     if (!isValid) {
-      return { valid: false, error: 'Invalid signature' };
+      return { valid: false, code: 'SIGNATURE_INVALID', message: 'Invalid signature' };
     }
 
-    // Mark nonce as used
-    usedNonces.add(nonce);
     return { valid: true };
   } catch (error) {
-    return { valid: false, error: error.message };
+    return { valid: false, code: 'SIGNATURE_INVALID', message: error.message };
   }
 }
 
@@ -131,19 +151,52 @@ export default async function handler(req, res) {
       signatureLength: signature.length,
     });
 
-    // CRITICAL: Cryptographically verify signature using tweetnacl
-    const verification = verifyWalletActivation(wallet, message, signature, nonce, timestamp);
-    
-    if (!verification.valid) {
+    const nonceVerification = await verifyAndConsumeNonce(nonce);
+    if (!nonceVerification.valid) {
       console.error('[WALLET-AUTH-FAILED]', {
         wallet: wallet.slice(0, 8) + '...',
-        error: verification.error,
+        code: nonceVerification.code,
+        message: nonceVerification.message,
         timestamp: new Date().toISOString(),
       });
 
       return res.status(401).json({
         success: false,
-        error: verification.error || 'Wallet verification failed',
+        code: nonceVerification.code,
+        error: nonceVerification.message,
+      });
+    }
+
+    const now = Date.now();
+    const requestTime = timestamp * 1000;
+    if (Math.abs(now - requestTime) > SIGNATURE_TIMEOUT_MS) {
+      console.error('[WALLET-AUTH-FAILED]', {
+        wallet: wallet.slice(0, 8) + '...',
+        code: 'SIGNATURE_EXPIRED',
+        message: 'Signature timestamp expired',
+        timestamp: new Date().toISOString(),
+      });
+
+      return res.status(401).json({
+        success: false,
+        code: 'SIGNATURE_EXPIRED',
+        error: 'Signature timestamp expired',
+      });
+    }
+
+    const signatureVerification = verifySignature(wallet, message, signature);
+    if (!signatureVerification.valid) {
+      console.error('[WALLET-AUTH-FAILED]', {
+        wallet: wallet.slice(0, 8) + '...',
+        code: signatureVerification.code,
+        message: signatureVerification.message,
+        timestamp: new Date().toISOString(),
+      });
+
+      return res.status(401).json({
+        success: false,
+        code: signatureVerification.code,
+        error: signatureVerification.message,
       });
     }
 
