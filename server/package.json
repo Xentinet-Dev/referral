@@ -1,0 +1,17 @@
+{
+  "name": "referral-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Backend server for referral system with Stripe and Rewardful integration",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "stripe": "^14.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0"
+  }
+}
