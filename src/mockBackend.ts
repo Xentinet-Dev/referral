@@ -375,7 +375,7 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
   // Create Rewardful affiliate via backend API
   // This replaces local generateAffiliateId() with real Rewardful API call
   try {
-    const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000';
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
     const response = await fetch(`${backendUrl}/api/create-rewardful-affiliate`, {
       method: 'POST',
       headers: {

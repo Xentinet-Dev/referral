@@ -121,7 +121,7 @@ Nonce: ${nonce}`;
       const signedMessage = btoa(binary);
 
       // Send to backend for verification
-      const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000';
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
       const response = await fetch(`${backendUrl}/api/verify-wallet`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
