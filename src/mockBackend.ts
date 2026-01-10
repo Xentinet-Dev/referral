@@ -375,8 +375,10 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
   // Create Rewardful affiliate via backend API
   // This replaces local generateAffiliateId() with real Rewardful API call
   try {
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
-    const response = await fetch(`${backendUrl}/api/create-rewardful-affiliate`, {
+    // Use relative URL for Vercel serverless functions, or VITE_BACKEND_URL if set
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+    const apiPath = backendUrl ? `${backendUrl}/api/create-rewardful-affiliate` : '/api/create-rewardful-affiliate';
+    const response = await fetch(apiPath, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

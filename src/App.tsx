@@ -121,8 +121,10 @@ Nonce: ${nonce}`;
       const signedMessage = btoa(binary);
 
       // Send to backend for verification
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
-      const response = await fetch(`${backendUrl}/api/verify-wallet`, {
+      // Use relative URL for Vercel serverless functions, or VITE_BACKEND_URL if set
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const apiPath = backendUrl ? `${backendUrl}/api/verify-wallet` : '/api/verify-wallet';
+      const response = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -184,9 +186,11 @@ Nonce: ${nonce}`;
 
         // CRITICAL: Get referral progress from backend API (webhook-driven)
         // Frontend never calculates or modifies referral counts
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+        // Use relative URL for Vercel serverless functions, or VITE_BACKEND_URL if set
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+        const apiPath = backendUrl ? `${backendUrl}/api/referral-progress` : '/api/referral-progress';
         try {
-          const progressResponse = await fetch(`${backendUrl}/api/referral-progress/${publicKey.toString()}`);
+          const progressResponse = await fetch(`${apiPath}/${publicKey.toString()}`);
           if (progressResponse.ok) {
             const progressData = await progressResponse.json();
             if (progressData.success) {
