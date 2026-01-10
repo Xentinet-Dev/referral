@@ -162,13 +162,15 @@ Nonce: ${nonce}`;
   }, []);
 
   // Fetch referrer data when wallet is verified - NO SIGNING HERE, READ-ONLY
-  // This only fetches display data, does NOT authorize any actions
+  // CRITICAL: Frontend only reads from backend, never modifies referral counts
+  // Referral completion is ONLY determined by Rewardful webhooks
   useEffect(() => {
     const fetchReferrerData = async () => {
       // Only fetch if wallet is connected AND verified
       if (!publicKey || !connected || !isVerified) return;
 
       try {
+        // Get validation and affiliate data from mock backend
         const data = await getReferrerData(publicKey.toString());
         
         // Display existing state (read-only, no authorization implied)
@@ -180,12 +182,50 @@ Nonce: ${nonce}`;
           }
         }
 
-        if (data.allocation_multiplier) {
-          setReferrerData({
-            successful_referrals: data.allocation_multiplier.successful_referrals,
-            allocation_multiplier: data.allocation_multiplier.total_multiplier,
-            max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
-          });
+        // CRITICAL: Get referral progress from backend API (webhook-driven)
+        // Frontend never calculates or modifies referral counts
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3000';
+        try {
+          const progressResponse = await fetch(`${backendUrl}/api/referral-progress/${publicKey.toString()}`);
+          if (progressResponse.ok) {
+            const progressData = await progressResponse.json();
+            if (progressData.success) {
+              // Use backend data (source of truth from webhooks)
+              setReferrerData({
+                successful_referrals: progressData.successful_referrals,
+                allocation_multiplier: progressData.allocation_multiplier.total,
+                max_bonus_reached: progressData.allocation_multiplier.max_bonus_reached,
+              });
+            } else {
+              // Fallback to mock backend data if API fails
+              if (data.allocation_multiplier) {
+                setReferrerData({
+                  successful_referrals: data.allocation_multiplier.successful_referrals,
+                  allocation_multiplier: data.allocation_multiplier.total_multiplier,
+                  max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
+                });
+              }
+            }
+          } else {
+            // Fallback to mock backend data if API unavailable
+            if (data.allocation_multiplier) {
+              setReferrerData({
+                successful_referrals: data.allocation_multiplier.successful_referrals,
+                allocation_multiplier: data.allocation_multiplier.total_multiplier,
+                max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
+              });
+            }
+          }
+        } catch (progressError) {
+          console.error('Error fetching referral progress from backend:', progressError);
+          // Fallback to mock backend data
+          if (data.allocation_multiplier) {
+            setReferrerData({
+              successful_referrals: data.allocation_multiplier.successful_referrals,
+              allocation_multiplier: data.allocation_multiplier.total_multiplier,
+              max_bonus_reached: data.allocation_multiplier.max_bonus_reached,
+            });
+          }
         }
       } catch (error) {
         console.error('Error fetching referrer data:', error);

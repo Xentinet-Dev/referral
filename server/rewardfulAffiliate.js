@@ -235,3 +235,19 @@ export async function createRewardfulAffiliate(wallet) {
 export function getRewardfulAffiliateId(wallet) {
   return walletAffiliateMap.get(wallet) || null;
 }
+
+/**
+ * Get reverse mapping: affiliate_id → wallet_address
+ * 
+ * Used for webhook processing to resolve affiliate IDs to wallets
+ * 
+ * @returns {Map<string, string>} Map of affiliate_id → wallet_address
+ */
+export function getAffiliateWalletMap() {
+  // Create reverse mapping from wallet → affiliate_id
+  const reverseMap = new Map();
+  for (const [wallet, affiliateId] of walletAffiliateMap.entries()) {
+    reverseMap.set(affiliateId, wallet);
+  }
+  return reverseMap;
+}

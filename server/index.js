@@ -11,8 +11,9 @@
 import express from 'express';
 import cors from 'cors';
 import { triggerStripeConversion } from './stripeConversion.js';
-import { createRewardfulAffiliate, markWalletActivated } from './rewardfulAffiliate.js';
+import { createRewardfulAffiliate, markWalletActivated, getAffiliateWalletMap } from './rewardfulAffiliate.js';
 import { verifyWalletActivation } from './signatureVerification.js';
+import { processWebhook, getWalletReferralProgress } from './rewardfulWebhook.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -192,6 +193,120 @@ app.post('/api/create-rewardful-affiliate', async (req, res) => {
       error: error.message,
       stack: error.stack,
       duration: `${duration}ms`,
+      timestamp: new Date().toISOString(),
+    });
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Internal server error',
+    });
+  }
+});
+
+// Rewardful webhook endpoint
+// CRITICAL: Rewardful is the source of truth for referral completion
+// A referral is ONLY considered successful when Rewardful confirms it via webhook
+app.post('/api/webhooks/rewardful', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    // Log entire payload for debugging
+    console.log('[WEBHOOK] Raw payload received', {
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      timestamp: new Date().toISOString(),
+    });
+
+    // Get affiliate → wallet mapping
+    const affiliateWalletMap = getAffiliateWalletMap();
+
+    // Process webhook
+    const result = processWebhook(req.body, affiliateWalletMap);
+
+    const duration = Date.now() - startTime;
+
+    if (result.processed) {
+      console.log('[WEBHOOK] Event processed', {
+        event: result.event,
+        success: result.result?.success,
+        duration: `${duration}ms`,
+        timestamp: new Date().toISOString(),
+      });
+      res.status(200).json({
+        success: true,
+        event: result.event,
+        processed: true,
+      });
+    } else {
+      console.log('[WEBHOOK] Event ignored or logged only', {
+        event: result.event,
+        message: result.message,
+        duration: `${duration}ms`,
+        timestamp: new Date().toISOString(),
+      });
+      res.status(200).json({
+        success: true,
+        event: result.event,
+        processed: false,
+        message: result.message,
+      });
+    }
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('[WEBHOOK] Error processing webhook', {
+      error: error.message,
+      stack: error.stack,
+      duration: `${duration}ms`,
+      timestamp: new Date().toISOString(),
+    });
+    // Always return 200 to Rewardful (don't trigger retries for our errors)
+    res.status(200).json({
+      success: false,
+      error: 'Webhook processing error',
+    });
+  }
+});
+
+// Get referral progress for a wallet (frontend reads from here only)
+// CRITICAL: Frontend must never calculate or modify referral counts
+app.get('/api/referral-progress/:wallet', async (req, res) => {
+  try {
+    const { wallet } = req.params;
+
+    if (!wallet) {
+      return res.status(400).json({
+        success: false,
+        error: 'wallet parameter is required',
+      });
+    }
+
+    console.log('[REFERRAL-PROGRESS] Request', {
+      wallet: wallet.slice(0, 8) + '...',
+    });
+
+    const progress = getWalletReferralProgress(wallet);
+
+    console.log('[REFERRAL-PROGRESS] Response', {
+      wallet: wallet.slice(0, 8) + '...',
+      count: progress.count,
+      multiplier: progress.multiplier.total + 'x',
+    });
+
+    res.json({
+      success: true,
+      wallet,
+      successful_referrals: progress.count,
+      max_referrals: 3,
+      allocation_multiplier: {
+        base: progress.multiplier.base,
+        bonus: progress.multiplier.bonus,
+        total: progress.multiplier.total,
+        referrals: progress.multiplier.referrals,
+        max_bonus_reached: progress.multiplier.referrals >= 3,
+      },
+    });
+  } catch (error) {
+    console.error('[REFERRAL-PROGRESS] Error', {
+      error: error.message,
+      stack: error.stack,
       timestamp: new Date().toISOString(),
     });
     res.status(500).json({
