@@ -208,22 +208,31 @@ Nonce: ${nonce}`;
   // This prevents auto-sign on page load, refresh, wallet auto-reconnect, or background rehydration
   // NOTE: This useEffect must be AFTER beginActivation declaration
   useEffect(() => {
-    const wasDisconnected = previousConnectedState.current === false;
-    const isNowConnected = connected === true;
-    const transitionedToConnected = wasDisconnected && isNowConnected;
+    // Debug: Log condition checks
+    const conditions = {
+      userClickedConnect: userClickedConnect.current,
+      connected,
+      hasPublicKey: !!publicKey,
+      notVerified: !isVerified,
+      notPending: !activationPending,
+      hasSignMessage: !!signMessage,
+    };
+    const allMet = conditions.userClickedConnect && conditions.connected && 
+                   conditions.hasPublicKey && conditions.notVerified && conditions.notPending && conditions.hasSignMessage;
+    
+    if (!allMet && userClickedConnect.current) {
+      console.log('[AUTO-ACTIVATE] Conditions not met:', conditions);
+    }
     
     // Only attempt activation if ALL conditions are met:
     // 1. User explicitly clicked Connect Wallet (SAFETY GUARD - REQUIRED)
-    // 2. Connection transitioned from false → true (user's click resulted in connection)
-    // 3. We've seen a disconnect after mount (prevents auto-reconnect on page load)
-    // 4. Currently connected
-    // 5. Not already verified
-    // 6. Not already pending activation
-    // 7. User has signMessage capability
+    // 2. Currently connected
+    // 3. Not already verified
+    // 4. Not already pending activation
+    // 5. User has signMessage capability
+    // Note: userClickedConnect flag is cleared after activation, preventing re-triggers
     if (
       userClickedConnect.current && // EXPLICIT GUARD: Only set on user click
-      transitionedToConnected &&
-      hasSeenDisconnectAfterMount.current &&
       connected &&
       publicKey &&
       !isVerified &&
@@ -234,17 +243,21 @@ Nonce: ${nonce}`;
       // Fetch nonce before activation
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
       const noncePath = backendUrl ? `${backendUrl}/api/nonce` : '/api/nonce';
+      console.log('[AUTO-ACTIVATE] Triggering activation after user click');
       fetch(noncePath)
         .then(res => res.json())
         .then(nonceData => {
           if (nonceData.success && nonceData.nonce && nonceData.timestamp) {
+            console.log('[AUTO-ACTIVATE] Nonce fetched, calling beginActivation');
             beginActivation(nonceData.nonce, nonceData.timestamp);
           } else {
+            console.error('[AUTO-ACTIVATE] Nonce fetch failed', nonceData);
             setVerificationError('Failed to fetch nonce');
             setActivationPending(false);
           }
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error('[AUTO-ACTIVATE] Nonce fetch error', error);
           setVerificationError('Failed to fetch nonce');
           setActivationPending(false);
         });
