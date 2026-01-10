@@ -121,6 +121,30 @@ After setup, test the flow:
 
 ## Troubleshooting
 
+### "Failed to fetch nonce" or "Supabase not configured"
+1. **Check Environment Variables in Vercel**:
+   - Go to Vercel Dashboard → Your Project → Settings → Environment Variables
+   - Verify `SUPABASE_URL` is set (format: `https://xxxxx.supabase.co`)
+   - Verify `SUPABASE_SERVICE_ROLE_KEY` is set (long string starting with `eyJ...`)
+   - **Important**: Must use Service Role Key (not anon key)
+   - After adding/updating, **redeploy** the project
+
+2. **Verify Supabase Tables Exist**:
+   - Go to Supabase Dashboard → SQL Editor
+   - Run: `SELECT * FROM nonces LIMIT 1;`
+   - If error "relation nonces does not exist", run `supabase-schema.sql` again
+   - Check all 4 tables exist: `nonces`, `wallet_activation`, `wallet_affiliates`, `rewardful_conversions`
+
+3. **Check RLS Policies**:
+   - Go to Supabase Dashboard → Authentication → Policies
+   - Verify policies exist for `nonces` table: "Service role full access nonces"
+   - If missing, run `supabase-schema.sql` again (it now includes DROP IF EXISTS for idempotency)
+
+4. **Test Nonce Endpoint Directly**:
+   - In browser console or terminal: `curl https://your-app.vercel.app/api/nonce`
+   - Check Vercel function logs for `[NONCE]` entries
+   - Look for specific error messages (missing config, table not found, permission denied)
+
 ### "Missing Supabase configuration"
 - Check `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set in Vercel
 - Redeploy after adding environment variables

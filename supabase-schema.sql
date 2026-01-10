@@ -61,6 +61,13 @@ ALTER TABLE nonces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rewardful_conversions ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Service role can do everything (used by API routes)
+-- Drop policies if they exist (allows re-running this script safely)
+DROP POLICY IF EXISTS "Service role full access wallet_activation" ON wallet_activation;
+DROP POLICY IF EXISTS "Service role full access wallet_affiliates" ON wallet_affiliates;
+DROP POLICY IF EXISTS "Service role full access nonces" ON nonces;
+DROP POLICY IF EXISTS "Service role full access rewardful_conversions" ON rewardful_conversions;
+
+-- Create policies
 CREATE POLICY "Service role full access wallet_activation" ON wallet_activation
   FOR ALL USING (auth.role() = 'service_role');
 
