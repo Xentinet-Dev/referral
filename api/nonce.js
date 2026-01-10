@@ -48,6 +48,9 @@ export default async function handler(req, res) {
     console.log('[NONCE] Generating nonce', {
       nonce: nonce.slice(0, 8) + '...',
       timestamp,
+      supabaseUrl: supabaseUrl ? supabaseUrl.slice(0, 30) + '...' : 'missing',
+      hasServiceKey: !!supabaseServiceKey,
+      serviceKeyPrefix: supabaseServiceKey ? supabaseServiceKey.slice(0, 20) + '...' : 'missing',
     });
 
     const { error } = await supabase
