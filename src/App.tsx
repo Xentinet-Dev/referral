@@ -128,7 +128,8 @@ function App() {
   };
 
   // Wallet activation via signature (MANDATORY before any features unlock)
-  const beginActivation = useCallback(async () => {
+  // Accepts nonce and timestamp from caller (must be fetched from /api/nonce)
+  const beginActivation = useCallback(async (nonce: string, timestamp: number) => {
     if (!publicKey || !signMessage) {
       setActivationPending(false);
       return;
@@ -137,10 +138,6 @@ function App() {
     setVerificationError(null);
 
     try {
-      // Generate unique nonce and timestamp
-      const nonce = crypto.randomUUID();
-      const timestamp = Math.floor(Date.now() / 1000);
-
       // Create activation message
       const message = `Verify ownership and continue
 
@@ -178,12 +175,12 @@ Nonce: ${nonce}`;
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Wallet verification failed');
+        throw new Error(errorData.error || errorData.code || 'Wallet verification failed');
       }
 
       const data = await response.json();
       if (!data.success) {
-        throw new Error(data.error || 'Wallet verification failed');
+        throw new Error(data.error || data.code || 'Wallet verification failed');
       }
 
       // Wallet activated - unlock features
@@ -224,7 +221,23 @@ Nonce: ${nonce}`;
       signMessage
     ) {
       setActivationPending(true);
-      beginActivation();
+      // Fetch nonce before activation
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const noncePath = backendUrl ? `${backendUrl}/api/nonce` : '/api/nonce';
+      fetch(noncePath)
+        .then(res => res.json())
+        .then(nonceData => {
+          if (nonceData.success && nonceData.nonce && nonceData.timestamp) {
+            beginActivation(nonceData.nonce, nonceData.timestamp);
+          } else {
+            setVerificationError('Failed to fetch nonce');
+            setActivationPending(false);
+          }
+        })
+        .catch(error => {
+          setVerificationError('Failed to fetch nonce');
+          setActivationPending(false);
+        });
       // Clear flag after triggering (prevents re-prompt if user cancels)
       userClickedConnect.current = false;
     }
@@ -232,8 +245,34 @@ Nonce: ${nonce}`;
 
   // Manual verification fallback (if user cancels signature)
   const handleVerifyWallet = useCallback(async () => {
-    await beginActivation();
-  }, [beginActivation]);
+    if (!publicKey || !signMessage) {
+      setVerificationError('Wallet not ready');
+      return;
+    }
+
+    setActivationPending(true);
+    setVerificationError(null);
+
+    try {
+      // Fetch a fresh nonce (EVERY click)
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+      const noncePath = backendUrl ? `${backendUrl}/api/nonce` : '/api/nonce';
+      const nonceRes = await fetch(noncePath);
+      const nonceData = await nonceRes.json();
+
+      if (!nonceData.success || !nonceData.nonce || !nonceData.timestamp) {
+        throw new Error('Failed to fetch nonce');
+      }
+
+      const { nonce, timestamp } = nonceData;
+
+      // Call beginActivation with fetched nonce and timestamp
+      await beginActivation(nonce, timestamp);
+    } catch (error) {
+      setVerificationError(error instanceof Error ? error.message : 'Verification failed');
+      setActivationPending(false);
+    }
+  }, [publicKey, signMessage, beginActivation]);
 
   // Check for ?via= parameter (referred user) - NO SIGNING HERE
   useEffect(() => {
