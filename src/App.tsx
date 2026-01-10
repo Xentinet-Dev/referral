@@ -22,6 +22,10 @@ function App() {
   const { publicKey, signMessage, wallet, disconnect, connected } = useWallet();
   const [countdown, setCountdown] = useState<number>(0);
   
+  // Wallet activation state (CRITICAL: Required before any features unlock)
+  const [isVerified, setIsVerified] = useState<boolean>(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  
   // Validation state
   const [validationStatus, setValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -50,7 +54,18 @@ function App() {
         console.error('Error disconnecting wallet on mount:', error);
       });
     }
+    // Reset verification state on mount (no session memory)
+    setIsVerified(false);
+    setVerificationError(null);
   }, []); // Run only once on mount
+
+  // Reset verification when wallet disconnects
+  useEffect(() => {
+    if (!connected) {
+      setIsVerified(false);
+      setVerificationError(null);
+    }
+  }, [connected]);
 
   // Countdown timer
   useEffect(() => {
@@ -75,6 +90,68 @@ function App() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  // Wallet activation via signature (MANDATORY before any features unlock)
+  const handleVerifyWallet = useCallback(async () => {
+    if (!publicKey || !signMessage) return;
+
+    setVerificationError(null);
+
+    try {
+      // Generate unique nonce and timestamp
+      const nonce = crypto.randomUUID();
+      const timestamp = Math.floor(Date.now() / 1000);
+
+      // Create activation message
+      const message = `Activate wallet for affiliate access
+
+Wallet: ${publicKey.toString()}
+Timestamp: ${timestamp}
+Nonce: ${nonce}`;
+
+      // Request signature from user
+      const encoded = new TextEncoder().encode(message);
+      const signature = await signMessage(encoded);
+
+      // Convert signature to base64
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < signature.length; i += chunkSize) {
+        binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
+      }
+      const signedMessage = btoa(binary);
+
+      // Send to backend for verification
+      const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000';
+      const response = await fetch(`${backendUrl}/api/verify-wallet`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          wallet: publicKey.toString(),
+          signature: signedMessage,
+          message,
+          nonce,
+          timestamp,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Wallet verification failed');
+      }
+
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Wallet verification failed');
+      }
+
+      // Wallet activated - unlock features
+      setIsVerified(true);
+    } catch (error) {
+      setVerificationError(error instanceof Error ? error.message : 'Verification failed');
+      setIsVerified(false);
+    }
+  }, [publicKey, signMessage]);
+
   // Check for ?via= parameter (referred user) - NO SIGNING HERE
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -84,13 +161,12 @@ function App() {
     }
   }, []);
 
-  // Fetch referrer data when wallet connects - NO SIGNING HERE, READ-ONLY
+  // Fetch referrer data when wallet is verified - NO SIGNING HERE, READ-ONLY
   // This only fetches display data, does NOT authorize any actions
   useEffect(() => {
     const fetchReferrerData = async () => {
-      // Only fetch if wallet is explicitly connected (not auto-connected)
-      // The forced disconnect on mount ensures we only get here after user clicks "Connect"
-      if (!publicKey || !connected) return;
+      // Only fetch if wallet is connected AND verified
+      if (!publicKey || !connected || !isVerified) return;
 
       try {
         const data = await getReferrerData(publicKey.toString());
@@ -117,7 +193,7 @@ function App() {
     };
 
     fetchReferrerData();
-  }, [publicKey, connected]);
+  }, [publicKey, connected, isVerified]);
 
   // Validate holdings - REQUIRES SIGNATURE (user click only)
   const handleValidateHoldings = useCallback(async () => {
@@ -324,21 +400,62 @@ Nonce: ${nonce}`;
 
       {/* Wallet Connection */}
       <section className="mb-8">
-        {publicKey ? (
+        {!connected ? (
+          <div className="flex justify-center">
+            <WalletMultiButton />
+          </div>
+        ) : publicKey ? (
           <div className="text-center">
             <p className="text-sm text-gray-200">
               Connected: {truncateAddress(publicKey.toString())}
             </p>
           </div>
-        ) : (
-          <div className="flex justify-center">
-            <WalletMultiButton />
-          </div>
-        )}
+        ) : null}
       </section>
 
-      {/* Validation Gate - Primary CTA */}
-      {publicKey && validationStatus !== 'validated' && (
+      {/* WALLET ACTIVATION GATE - Locks app until signature */}
+      {connected && publicKey && !isVerified && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-80 border-2 border-yellow-600 rounded-lg p-8 text-center">
+            <h2 className="text-2xl font-bold mb-4 text-yellow-400">
+              Signature Required to Activate Wallet
+            </h2>
+            <p className="text-sm text-gray-300 mb-4">
+              Your wallet is connected, but features are locked until you verify ownership.
+            </p>
+            <p className="text-xs text-gray-400 mb-6">
+              This signature activates your wallet for affiliate access. No features are available until you verify.
+            </p>
+            {verificationError && (
+              <p className="text-sm text-red-400 mb-4">{verificationError}</p>
+            )}
+            <button
+              onClick={handleVerifyWallet}
+              disabled={!signMessage}
+              className="px-8 py-4 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-semibold text-lg"
+            >
+              Verify Wallet
+            </button>
+            <p className="text-xs text-gray-500 mt-4">
+              If you refuse to sign, features remain locked.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* ALL FEATURES LOCKED UNTIL VERIFIED */}
+      {!isVerified && connected && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6 text-center">
+            <p className="text-sm text-gray-400">
+              All features are locked until wallet is verified.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* Validation Gate - Primary CTA (Only shown if wallet is verified) */}
+      {isVerified && publicKey && validationStatus !== 'validated' && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6 text-center">
             <h2 className="text-xl font-semibold mb-4">
@@ -389,8 +506,8 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Referral Link Display (After issuance) */}
-      {publicKey && validationStatus === 'validated' && referralLink && (
+      {/* Referral Link Display (After issuance and verification) */}
+      {isVerified && publicKey && validationStatus === 'validated' && referralLink && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4">Your Referral Link</h2>
@@ -415,8 +532,8 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Allocation Multiplier */}
-      {publicKey && validationStatus === 'validated' && referrerData && (
+      {/* Allocation Multiplier (Only shown if verified) */}
+      {isVerified && publicKey && validationStatus === 'validated' && referrerData && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4">Allocation Multiplier</h2>
@@ -441,8 +558,8 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Referred User Section */}
-      {publicKey && affiliateIdFromUrl && !attributionComplete && (
+      {/* Referred User Section (Only shown if verified) */}
+      {isVerified && publicKey && affiliateIdFromUrl && !attributionComplete && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4">Referred User</h2>
@@ -463,8 +580,8 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Referred User Validation */}
-      {publicKey && affiliateIdFromUrl && attributionComplete && (
+      {/* Referred User Validation (Only shown if verified) */}
+      {isVerified && publicKey && affiliateIdFromUrl && attributionComplete && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
             <h2 className="text-lg font-semibold mb-4">Referred User</h2>

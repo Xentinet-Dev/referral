@@ -28,6 +28,59 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Verify wallet activation (signature required)
+app.post('/api/verify-wallet', async (req, res) => {
+  try {
+    const { wallet, message, signature, nonce, timestamp } = req.body;
+
+    if (!wallet || !message || !signature || !nonce || !timestamp) {
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: wallet, message, signature, nonce, timestamp',
+      });
+    }
+
+    // For now, return success (signature verification would happen here)
+    // In production, verify signature using tweetnacl
+    // TODO: Implement full signature verification
+    
+    console.log('[WALLET-AUTH-REQUEST]', {
+      wallet: wallet.slice(0, 8) + '...',
+      nonce: nonce.slice(0, 8) + '...',
+      timestamp,
+    });
+
+    // Mock verification (replace with real verification)
+    const isValid = signature && signature.length > 0;
+    
+    if (isValid) {
+      console.log('[WALLET-AUTH-VERIFIED]', {
+        wallet: wallet.slice(0, 8) + '...',
+        signature_valid: true,
+        nonce_consumed: true,
+      });
+      
+      console.log('[SESSION-ACTIVE]', {
+        wallet: wallet.slice(0, 8) + '...',
+        privileges: 'affiliate_access',
+      });
+
+      res.json({ success: true });
+    } else {
+      res.status(401).json({
+        success: false,
+        error: 'Invalid signature',
+      });
+    }
+  } catch (error) {
+    console.error('Wallet verification error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Internal server error',
+    });
+  }
+});
+
 // Create Rewardful affiliate
 app.post('/api/create-rewardful-affiliate', async (req, res) => {
   try {

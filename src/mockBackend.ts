@@ -14,6 +14,9 @@
 import nacl from 'tweetnacl';
 import { PublicKey } from '@solana/web3.js';
 import type {
+  WalletActivationRequest,
+  WalletActivationResponse,
+  VerifyWalletFunction,
   ValidationRequest,
   ValidationResult,
   IssueAffiliateLinkRequest,
@@ -168,6 +171,54 @@ function markNonceUsed(nonce: string): void {
 // Affiliate IDs are now created via Rewardful API in backend
 // See: server/rewardfulAffiliate.js
 // This ensures valid Rewardful affiliate IDs for proper attribution
+
+// ============================================================================
+// WALLET ACTIVATION
+// ============================================================================
+
+/**
+ * Verify wallet activation via signature.
+ * 
+ * This is the mandatory first step - wallet must be activated before any features unlock.
+ * 
+ * Rules:
+ * - Verifies signature cryptographically
+ * - Validates timestamp (≤ 5 minutes old)
+ * - Ensures nonce is unused
+ * - Marks wallet as verified (session only, resets on reload)
+ */
+export const verifyWallet: VerifyWalletFunction = async (
+  request: WalletActivationRequest
+): Promise<WalletActivationResponse> => {
+  await new Promise(resolve => setTimeout(resolve, 300));
+
+  // Verify signature
+  const signatureValid = verifySignature(request.message, request.signature, request.wallet);
+  if (!signatureValid) {
+    return {
+      success: false,
+      error: 'Invalid signature',
+    };
+  }
+
+  // Validate nonce and timestamp
+  const nonceCheck = validateNonceAndTimestamp(request.nonce, request.timestamp);
+  if (!nonceCheck.valid) {
+    return {
+      success: false,
+      error: nonceCheck.error || 'Invalid nonce or timestamp',
+    };
+  }
+
+  // Mark nonce as used
+  markNonceUsed(request.nonce);
+
+  // Wallet activation successful
+  // Note: This is session-only, resets on page reload (stateless)
+  return {
+    success: true,
+  };
+};
 
 // ============================================================================
 // HOLDINGS VALIDATION

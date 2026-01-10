@@ -8,7 +8,42 @@
  * - Users must validate holdings (≥ $2) before getting a link
  * - One wallet = one affiliate ID (immutable)
  * - Allocation multiplier: 2× base + up to 3× bonus (1× per referral, max 3×)
+ * - Wallet activation via signature required before any features unlock
  */
+
+// ============================================================================
+// WALLET ACTIVATION
+// ============================================================================
+
+export interface WalletActivationRequest {
+  wallet: string;
+  message: string;
+  signature: string; // Base64 encoded signature
+  timestamp: number;
+  nonce: string;
+}
+
+export interface WalletActivationResponse {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * POST /api/verify-wallet
+ * 
+ * Activates wallet via signature verification.
+ * 
+ * Rules:
+ * - REQUIRES SIGNATURE - User must sign message to activate wallet
+ * - Backend verifies signature cryptographically
+ * - Validates timestamp (≤ 5 minutes old)
+ * - Ensures nonce is unused
+ * - Marks wallet as "verified session"
+ * - No features unlock until this succeeds
+ */
+export type VerifyWalletFunction = (
+  request: WalletActivationRequest
+) => Promise<WalletActivationResponse>;
 
 // ============================================================================
 // HOLDINGS VALIDATION
