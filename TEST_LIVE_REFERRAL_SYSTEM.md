@@ -7,6 +7,59 @@
 - ✅ Rewardful webhook is configured: `https://referral-blue.vercel.app/api/webhooks/rewardful`
 - ✅ Frontend is deployed and accessible
 
+## One E2E Test Checklist
+
+### Wallet A → Wallet B Flow
+
+**Setup:**
+- Wallet A: Has ≥ $2 of token
+- Wallet B: Has ≥ $2 of token (different wallet)
+
+**Steps:**
+
+1. **Wallet A (Referrer)**
+   - [ ] Open `https://referral-blue.vercel.app`
+   - [ ] Click "Connect Wallet" → Select wallet → Approve connection
+   - [ ] Signature prompt appears automatically → Sign message
+   - [ ] App unlocks (activation complete)
+   - [ ] Click "Validate Holdings" → Sign message
+   - [ ] Holdings validated (status shows "Validated")
+   - [ ] Click "Get Referral Link" → Sign message
+   - [ ] Copy referral link (e.g., `?via=aff_9xYkP3`)
+
+2. **Wallet B (Referred User)**
+   - [ ] Open referral link in new window/incognito: `https://referral-blue.vercel.app/?via=aff_9xYkP3`
+   - [ ] Click "Connect Wallet" → Select different wallet → Approve connection
+   - [ ] Signature prompt appears automatically → Sign message
+   - [ ] App unlocks (activation complete)
+   - [ ] Click "Validate Holdings" → Sign message
+   - [ ] Holdings validated
+
+3. **Trigger Conversion**
+   - [ ] Complete Stripe purchase (or trigger conversion via Rewardful)
+   - [ ] Wait 5-10 seconds for webhook
+
+4. **Verify Logs**
+   - [ ] Open Vercel Dashboard → Functions → `api/webhooks/rewardful` → Logs
+   - [ ] Look for: `[REWARDFUL-WEBHOOK-RECEIVED]` with `event: 'referral.converted'`
+   - [ ] Look for: `[REFERRAL-COMPLETED]` with:
+     - `wallet: 'WalletA_address'`
+     - `successful_referrals: '1/3'`
+     - `allocation_multiplier: '3x'`
+
+5. **Verify Frontend**
+   - [ ] Return to Wallet A's view
+   - [ ] Refresh page
+   - [ ] Check "Allocation Multiplier" section:
+     - [ ] Shows "Successful referrals: 1 / 3"
+     - [ ] Shows "Total: 3×" (2× base + 1× bonus)
+
+**Expected Log Pattern:**
+```
+[REWARDFUL-WEBHOOK-RECEIVED] { event: 'referral.converted', affiliate_id: 'aff_9xYkP3', referral_id: 'ref_...' }
+[REFERRAL-COMPLETED] { wallet: 'WalletA...', successful_referrals: '1/3', allocation_multiplier: '3x' }
+```
+
 ## Full End-to-End Test Flow
 
 ### Step 1: Create Referrer (Wallet A)

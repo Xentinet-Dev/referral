@@ -4,16 +4,22 @@
  * Frontend reads referral progress from this endpoint only.
  * CRITICAL: Frontend must never calculate or modify referral counts.
  * 
- * This endpoint returns the current referral count and allocation multiplier
- * for a wallet, as determined by Rewardful webhooks.
- * 
- * IMPORTANT: In serverless environment, in-memory storage is NOT shared between
- * function invocations. This MUST use a database in production.
+ * Storage: Supabase Postgres (rewardful_conversions table)
  */
 
-// In-memory storage (NOT shared with webhook handler in serverless)
-// TODO: In production, query from database (same DB as webhook handler)
-const walletReferralCounts = new Map(); // wallet → count
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.error('[REFERRAL-PROGRESS] Missing Supabase configuration');
+}
+
+const supabase = supabaseUrl && supabaseServiceKey
+  ? createClient(supabaseUrl, supabaseServiceKey)
+  : null;
 
 // Constants
 const BASE_MULTIPLIER = 2;
@@ -21,17 +27,43 @@ const MAX_BONUS_MULTIPLIER = 3;
 const BONUS_PER_REFERRAL = 1;
 
 /**
- * Get current successful referral count for a wallet
+ * Get current successful referral count for a wallet from Supabase
  */
-function getReferralCount(wallet) {
-  return walletReferralCounts.get(wallet) || 0;
+async function getReferralCount(wallet) {
+  if (!supabase) {
+    return 0;
+  }
+
+  try {
+    // Count distinct referral_ids for this wallet
+    const { count, error } = await supabase
+      .from('rewardful_conversions')
+      .select('referral_id', { count: 'exact', head: true })
+      .eq('wallet', wallet);
+
+    if (error) {
+      console.error('[REFERRAL-PROGRESS] Error getting referral count', {
+        wallet: wallet.slice(0, 8) + '...',
+        error: error.message,
+      });
+      return 0;
+    }
+
+    return count || 0;
+  } catch (error) {
+    console.error('[REFERRAL-PROGRESS] Error getting referral count', {
+      wallet: wallet.slice(0, 8) + '...',
+      error: error.message,
+    });
+    return 0;
+  }
 }
 
 /**
  * Calculate allocation multiplier for a wallet
  */
-function calculateAllocationMultiplier(wallet) {
-  const successfulReferrals = getReferralCount(wallet);
+async function calculateAllocationMultiplier(wallet) {
+  const successfulReferrals = await getReferralCount(wallet);
   const bonus = Math.min(successfulReferrals, MAX_BONUS_MULTIPLIER) * BONUS_PER_REFERRAL;
   const total = Math.min(BASE_MULTIPLIER + bonus, 3);
 
@@ -69,9 +101,9 @@ export default async function handler(req, res) {
       wallet: wallet.slice(0, 8) + '...',
     });
 
-    // TODO: In production, query from database instead of in-memory Map
-    const count = getReferralCount(wallet);
-    const multiplier = calculateAllocationMultiplier(wallet);
+    // Query referral count from Supabase
+    const count = await getReferralCount(wallet);
+    const multiplier = await calculateAllocationMultiplier(wallet);
 
     console.log('[REFERRAL-PROGRESS] Response', {
       wallet: wallet.slice(0, 8) + '...',

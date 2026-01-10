@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
@@ -25,6 +25,15 @@ function App() {
   // Wallet activation state (CRITICAL: Required before any features unlock)
   const [isVerified, setIsVerified] = useState<boolean>(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [showLearnMore, setShowLearnMore] = useState<boolean>(false);
+  const [activationPending, setActivationPending] = useState<boolean>(false);
+  
+  // SAFETY GUARD: Track user-initiated connection intent
+  // CRITICAL: This flag is ONLY set when user explicitly clicks Connect Wallet button
+  // Prevents auto-sign on page load, refresh, wallet auto-reconnect, or background rehydration
+  const userClickedConnect = useRef<boolean>(false); // Set ONLY on Connect Wallet click
+  const previousConnectedState = useRef<boolean | null>(null); // null = initial state
+  const hasSeenDisconnectAfterMount = useRef<boolean>(false); // Track if we've seen disconnect after mount
   
   // Validation state
   const [validationStatus, setValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
@@ -57,6 +66,11 @@ function App() {
     // Reset verification state on mount (no session memory)
     setIsVerified(false);
     setVerificationError(null);
+    setActivationPending(false);
+    // CRITICAL: Clear user intent flags on mount (prevents auto-sign on load/refresh)
+    userClickedConnect.current = false;
+    previousConnectedState.current = null; // null = initial state
+    hasSeenDisconnectAfterMount.current = false;
   }, []); // Run only once on mount
 
   // Reset verification when wallet disconnects
@@ -64,6 +78,29 @@ function App() {
     if (!connected) {
       setIsVerified(false);
       setVerificationError(null);
+      setActivationPending(false);
+      // Clear user intent when disconnected
+      userClickedConnect.current = false;
+      // Mark that we've seen a disconnect (after mount, this means user can reconnect)
+      hasSeenDisconnectAfterMount.current = true;
+    }
+    // Track previous state to detect transitions
+    if (previousConnectedState.current === null) {
+      // First state we've seen - set it
+      previousConnectedState.current = connected;
+    }
+  }, [connected]);
+
+  // SAFETY GUARD: Track connection state transitions
+  // This updates previousConnectedState to detect false → true transitions
+  // But does NOT set activation flag - that requires explicit user click
+  useEffect(() => {
+    // Update previous state for next render
+    if (previousConnectedState.current !== null) {
+      previousConnectedState.current = connected;
+    } else {
+      // First state we've seen - set it
+      previousConnectedState.current = connected;
     }
   }, [connected]);
 
@@ -91,8 +128,11 @@ function App() {
   };
 
   // Wallet activation via signature (MANDATORY before any features unlock)
-  const handleVerifyWallet = useCallback(async () => {
-    if (!publicKey || !signMessage) return;
+  const beginActivation = useCallback(async () => {
+    if (!publicKey || !signMessage) {
+      setActivationPending(false);
+      return;
+    }
 
     setVerificationError(null);
 
@@ -102,7 +142,7 @@ function App() {
       const timestamp = Math.floor(Date.now() / 1000);
 
       // Create activation message
-      const message = `Activate wallet for affiliate access
+      const message = `Verify ownership and continue
 
 Wallet: ${publicKey.toString()}
 Timestamp: ${timestamp}
@@ -148,11 +188,52 @@ Nonce: ${nonce}`;
 
       // Wallet activated - unlock features
       setIsVerified(true);
+      setActivationPending(false);
     } catch (error) {
       setVerificationError(error instanceof Error ? error.message : 'Verification failed');
       setIsVerified(false);
+      setActivationPending(false);
     }
   }, [publicKey, signMessage]);
+
+  // Auto-activate on connect (1 click + 1 signature flow)
+  // SAFETY GUARD: Only triggers if userClickedConnect flag is set (explicit user click)
+  // This prevents auto-sign on page load, refresh, wallet auto-reconnect, or background rehydration
+  // NOTE: This useEffect must be AFTER beginActivation declaration
+  useEffect(() => {
+    const wasDisconnected = previousConnectedState.current === false;
+    const isNowConnected = connected === true;
+    const transitionedToConnected = wasDisconnected && isNowConnected;
+    
+    // Only attempt activation if ALL conditions are met:
+    // 1. User explicitly clicked Connect Wallet (SAFETY GUARD - REQUIRED)
+    // 2. Connection transitioned from false → true (user's click resulted in connection)
+    // 3. We've seen a disconnect after mount (prevents auto-reconnect on page load)
+    // 4. Currently connected
+    // 5. Not already verified
+    // 6. Not already pending activation
+    // 7. User has signMessage capability
+    if (
+      userClickedConnect.current && // EXPLICIT GUARD: Only set on user click
+      transitionedToConnected &&
+      hasSeenDisconnectAfterMount.current &&
+      connected &&
+      publicKey &&
+      !isVerified &&
+      !activationPending &&
+      signMessage
+    ) {
+      setActivationPending(true);
+      beginActivation();
+      // Clear flag after triggering (prevents re-prompt if user cancels)
+      userClickedConnect.current = false;
+    }
+  }, [connected, publicKey, isVerified, activationPending, signMessage, beginActivation]);
+
+  // Manual verification fallback (if user cancels signature)
+  const handleVerifyWallet = useCallback(async () => {
+    await beginActivation();
+  }, [beginActivation]);
 
   // Check for ?via= parameter (referred user) - NO SIGNING HERE
   useEffect(() => {
@@ -429,10 +510,20 @@ Nonce: ${nonce}`;
     <div className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto text-white">
       {/* Header */}
       <header className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Countdown Window</h1>
-        <p className="text-sm text-gray-300">
-          The window closes when the timer reaches zero.
-        </p>
+        <div className="flex justify-between items-start">
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Countdown Window</h1>
+            <p className="text-sm text-gray-300">
+              The window closes when the timer reaches zero.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowLearnMore(true)}
+            className="text-sm text-blue-400 hover:text-blue-300 underline"
+          >
+            Learn More
+          </button>
+        </div>
       </header>
 
       {/* Countdown Timer */}
@@ -445,7 +536,14 @@ Nonce: ${nonce}`;
       {/* Wallet Connection */}
       <section className="mb-8">
         {!connected ? (
-          <div className="flex justify-center">
+          <div 
+            className="flex justify-center"
+            onClick={() => {
+              // SAFETY GUARD: Set flag ONLY when user clicks Connect Wallet
+              // This is the ONLY place this flag is set - explicit user intent
+              userClickedConnect.current = true;
+            }}
+          >
             <WalletMultiButton />
           </div>
         ) : publicKey ? (
@@ -458,20 +556,14 @@ Nonce: ${nonce}`;
       </section>
 
       {/* WALLET ACTIVATION GATE - Locks app until signature */}
-      {connected && publicKey && !isVerified && (
+      {connected && publicKey && !isVerified && !activationPending && (
         <section className="mb-8">
           <div className="bg-gray-900 bg-opacity-80 border-2 border-yellow-600 rounded-lg p-8 text-center">
             <h2 className="text-2xl font-bold mb-4 text-yellow-400">
-              Signature Required to Activate Wallet
+              Signature Required to Continue
             </h2>
-            <p className="text-sm text-gray-300 mb-2">
-              Wallet detected (read-only)
-            </p>
             <p className="text-sm text-gray-300 mb-4">
-              To continue, you must verify ownership with a signature.
-            </p>
-            <p className="text-xs text-gray-400 mb-6">
-              This signature activates your wallet for affiliate access. No features are available until you verify.
+              You must sign to verify wallet ownership and continue.
             </p>
             {verificationError && (
               <p className="text-sm text-red-400 mb-4">{verificationError}</p>
@@ -481,10 +573,18 @@ Nonce: ${nonce}`;
               disabled={!signMessage}
               className="px-8 py-4 bg-yellow-600 text-white rounded hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-semibold text-lg"
             >
-              Verify Wallet
+              Verify (sign)
             </button>
-            <p className="text-xs text-gray-500 mt-4">
-              If you refuse to sign, features remain locked.
+          </div>
+        </section>
+      )}
+
+      {/* Activation in progress */}
+      {connected && publicKey && !isVerified && activationPending && (
+        <section className="mb-8">
+          <div className="bg-gray-900 bg-opacity-80 border-2 border-blue-600 rounded-lg p-8 text-center">
+            <p className="text-sm text-gray-300">
+              Please approve the signature request in your wallet...
             </p>
           </div>
         </section>
@@ -656,12 +756,62 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Simple Explanation */}
-      <section className="mt-12 pt-8 border-t border-gray-400 border-opacity-50">
-        <p className="text-sm text-gray-200">
-          Referral links are earned by validating holdings (≥ $2 USD). Each successful referral adds +1× to your allocation multiplier, up to a maximum of 3× total. All actions require wallet signatures for security.
-        </p>
-      </section>
+      {/* Learn More Modal */}
+      {showLearnMore && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6">
+            <div className="flex justify-between items-start mb-4">
+              <h2 className="text-2xl font-bold">How referrals work</h2>
+              <button
+                onClick={() => setShowLearnMore(false)}
+                className="text-gray-400 hover:text-white text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-4 text-sm text-gray-200">
+              <div>
+                <p className="mb-2">1. You must hold at least $2 of the token to unlock your referral link.</p>
+              </div>
+              
+              <div>
+                <p className="mb-2">2. You'll be asked to sign once to prove wallet ownership (no gas).</p>
+              </div>
+              
+              <div>
+                <p className="mb-2">3. Your referral link is unique to your wallet.</p>
+              </div>
+              
+              <div>
+                <p className="mb-2">4. A referral only counts when someone uses your link and buys/holds ≥ $2 during the window.</p>
+              </div>
+              
+              <div>
+                <p className="mb-2">5. When you reach 3 successful referrals, your allocation multiplier increases (max 3× total).</p>
+              </div>
+              
+              <div>
+                <p className="mb-2">6. When the timer ends, allocations are finalized and the airdrop occurs (after the timer ends).</p>
+              </div>
+            </div>
+
+            <div className="mt-8 pt-6 border-t border-gray-700">
+              <h3 className="text-lg font-semibold mb-3">Troubleshooting</h3>
+              <div className="space-y-3 text-sm text-gray-300">
+                <div>
+                  <p className="font-medium mb-1">I used a link but referrals didn't increase</p>
+                  <p className="text-gray-400">They haven't hit $2 yet or Rewardful hasn't confirmed yet.</p>
+                </div>
+                <div>
+                  <p className="font-medium mb-1">I connected but nothing happened</p>
+                  <p className="text-gray-400">You must sign to proceed.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

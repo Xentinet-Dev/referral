@@ -34,10 +34,14 @@ REWARDFUL_API_SECRET=your_rewardful_api_secret (alternative name)
 
 ## Webhook Configuration
 
+### Webhook URL
+
+**Production URL**: `https://referral-blue.vercel.app/api/webhooks/rewardful`
+
 ### In Rewardful Dashboard
 
 1. Go to https://app.rewardful.com/settings/webhooks
-2. Add webhook URL: `https://your-vercel-domain.vercel.app/api/webhooks/rewardful`
+2. Add webhook URL: `https://referral-blue.vercel.app/api/webhooks/rewardful`
 3. Select events:
    - ✅ `referral.converted` (required - processes referrals)
    - ✅ `sale.created` (optional - logged only)
