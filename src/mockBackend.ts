@@ -163,25 +163,11 @@ function markNonceUsed(nonce: string): void {
 }
 
 // ============================================================================
-// HELPER: Generate unique affiliate ID
+// NOTE: Affiliate ID generation moved to Rewardful API
 // ============================================================================
-
-function generateAffiliateId(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let id = '';
-  for (let i = 0; i < 8; i++) {
-    id += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  
-  while (affiliateIdStore.has(id)) {
-    id = '';
-    for (let i = 0; i < 8; i++) {
-      id += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-  }
-  
-  return id;
-}
+// Affiliate IDs are now created via Rewardful API in backend
+// See: server/rewardfulAffiliate.js
+// This ensures valid Rewardful affiliate IDs for proper attribution
 
 // ============================================================================
 // HOLDINGS VALIDATION
@@ -335,20 +321,66 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
     };
   }
 
-  // Generate new affiliate ID
-  const affiliateId = generateAffiliateId();
-  affiliateIdStore.set(affiliateId, request.wallet);
+  // Create Rewardful affiliate via backend API
+  // This replaces local generateAffiliateId() with real Rewardful API call
+  try {
+    const backendUrl = process.env.VITE_BACKEND_URL || 'http://localhost:3000';
+    const response = await fetch(`${backendUrl}/api/create-rewardful-affiliate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        wallet: request.wallet,
+      }),
+    });
 
-  referrer.affiliate_id = affiliateId;
-  referrerStore.set(request.wallet, referrer);
+    if (!response.ok) {
+      const errorData = await response.json();
+      return {
+        success: false,
+        affiliate_id: null,
+        referral_link: null,
+        error: errorData.error || 'Failed to create Rewardful affiliate',
+      };
+    }
 
-  const referralLink = `${window.location.origin}${window.location.pathname}?via=${affiliateId}`;
+    const rewardfulData = await response.json();
+    
+    if (!rewardfulData.success || !rewardfulData.affiliateId) {
+      return {
+        success: false,
+        affiliate_id: null,
+        referral_link: null,
+        error: rewardfulData.error || 'Rewardful affiliate creation failed',
+      };
+    }
 
-  return {
-    success: true,
-    affiliate_id: affiliateId,
-    referral_link: referralLink,
-  };
+    // Store Rewardful affiliate ID (not local random ID)
+    const rewardfulAffiliateId = rewardfulData.affiliateId;
+    affiliateIdStore.set(rewardfulAffiliateId, request.wallet);
+
+    referrer.affiliate_id = rewardfulAffiliateId;
+    referrerStore.set(request.wallet, referrer);
+
+    // Use Rewardful's referral link if provided, otherwise construct it
+    const referralLink = rewardfulData.referralLink || 
+      `${window.location.origin}${window.location.pathname}?via=${rewardfulAffiliateId}`;
+
+    return {
+      success: true,
+      affiliate_id: rewardfulAffiliateId,
+      referral_link: referralLink,
+    };
+  } catch (error) {
+    console.error('Rewardful affiliate creation error:', error);
+    return {
+      success: false,
+      affiliate_id: null,
+      referral_link: null,
+      error: error instanceof Error ? error.message : 'Failed to create Rewardful affiliate',
+    };
+  }
 };
 
 // ============================================================================

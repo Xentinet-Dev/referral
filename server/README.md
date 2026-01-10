@@ -29,19 +29,46 @@ Create a `.env` file:
 
 ```env
 STRIPE_SECRET_KEY=sk_test_...
+REWARDFUL_API_KEY=sk_live_...
+FRONTEND_URL=https://yourdomain.com
 PORT=3000
 ```
 
-Get your Stripe test key from: https://dashboard.stripe.com/test/apikeys
+Get your keys from:
+- Stripe: https://dashboard.stripe.com/test/apikeys
+- Rewardful: https://app.rewardful.com/settings/api
 
 ## Usage
 
 The server provides:
 
+- `POST /api/create-rewardful-affiliate` - Creates Rewardful affiliate for wallet
 - `POST /api/trigger-conversion` - Triggers Stripe conversion for Rewardful
 - `GET /health` - Health check endpoint
 
-### API Endpoint
+### API Endpoints
+
+#### Create Rewardful Affiliate
+
+```bash
+POST /api/create-rewardful-affiliate
+Content-Type: application/json
+
+{
+  "wallet": "WALLET_ADDRESS"
+}
+```
+
+Response:
+```json
+{
+  "success": true,
+  "affiliateId": "aff_9xYkP3",
+  "referralLink": "https://yourdomain.com/?via=aff_9xYkP3"
+}
+```
+
+#### Trigger Stripe Conversion
 
 ```bash
 POST /api/trigger-conversion
