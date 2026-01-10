@@ -407,7 +407,7 @@ Nonce: ${nonce}`;
         ) : publicKey ? (
           <div className="text-center">
             <p className="text-sm text-gray-200">
-              Connected: {truncateAddress(publicKey.toString())}
+              Wallet detected: {truncateAddress(publicKey.toString())} (read-only)
             </p>
           </div>
         ) : null}
@@ -420,8 +420,11 @@ Nonce: ${nonce}`;
             <h2 className="text-2xl font-bold mb-4 text-yellow-400">
               Signature Required to Activate Wallet
             </h2>
+            <p className="text-sm text-gray-300 mb-2">
+              Wallet detected (read-only)
+            </p>
             <p className="text-sm text-gray-300 mb-4">
-              Your wallet is connected, but features are locked until you verify ownership.
+              To continue, you must verify ownership with a signature.
             </p>
             <p className="text-xs text-gray-400 mb-6">
               This signature activates your wallet for affiliate access. No features are available until you verify.

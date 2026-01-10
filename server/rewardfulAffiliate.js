@@ -4,16 +4,44 @@
  * This file implements Rewardful affiliate creation via API.
  * 
  * IMPORTANT: This must run server-side. Never expose Rewardful API key to frontend.
+ * 
+ * SECURITY: This function should only be called after wallet activation is verified.
+ * The calling endpoint must verify that the wallet has been activated via signature.
  */
 
 // In-memory storage for wallet → Rewardful affiliate ID mapping
 // In production, use a database
 const walletAffiliateMap = new Map();
 
+// In-memory storage for activated wallets (session-only, resets on server restart)
+// In production, use Redis/DB with TTL
+// CRITICAL: This gates Rewardful affiliate creation
+const activatedWallets = new Set();
+
+/**
+ * Check if wallet is activated (has verified signature)
+ * 
+ * @param {string} wallet - Wallet address
+ * @returns {boolean} - True if wallet is activated
+ */
+export function isWalletActivated(wallet) {
+  return activatedWallets.has(wallet);
+}
+
+/**
+ * Mark wallet as activated (called after signature verification)
+ * 
+ * @param {string} wallet - Wallet address
+ */
+export function markWalletActivated(wallet) {
+  activatedWallets.add(wallet);
+}
+
 /**
  * Create or retrieve Rewardful affiliate for a wallet
  * 
- * Rules:
+ * SECURITY RULES:
+ * - Wallet must be activated (verified signature) before affiliate creation
  * - Only creates affiliate if wallet is validated (≥ $2 holdings)
  * - One wallet = one Rewardful affiliate ID (immutable)
  * - Returns existing affiliate ID if already created
@@ -23,6 +51,13 @@ const walletAffiliateMap = new Map();
  * @returns {Promise<{success: boolean, affiliateId?: string, referralLink?: string, error?: string}>}
  */
 export async function createRewardfulAffiliate(wallet) {
+  // CRITICAL: Gate affiliate creation behind activation
+  if (!isWalletActivated(wallet)) {
+    return {
+      success: false,
+      error: 'Wallet must be activated via signature before affiliate creation',
+    };
+  }
   try {
     // Check if affiliate already exists
     if (walletAffiliateMap.has(wallet)) {

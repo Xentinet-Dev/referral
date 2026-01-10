@@ -11,7 +11,8 @@
 import express from 'express';
 import cors from 'cors';
 import { triggerStripeConversion } from './stripeConversion.js';
-import { createRewardfulAffiliate } from './rewardfulAffiliate.js';
+import { createRewardfulAffiliate, markWalletActivated } from './rewardfulAffiliate.js';
+import { verifyWalletActivation } from './signatureVerification.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -29,6 +30,7 @@ app.get('/health', (req, res) => {
 });
 
 // Verify wallet activation (signature required)
+// CRITICAL: This endpoint cryptographically verifies signatures using tweetnacl
 app.post('/api/verify-wallet', async (req, res) => {
   try {
     const { wallet, message, signature, nonce, timestamp } = req.body;
@@ -40,38 +42,49 @@ app.post('/api/verify-wallet', async (req, res) => {
       });
     }
 
-    // For now, return success (signature verification would happen here)
-    // In production, verify signature using tweetnacl
-    // TODO: Implement full signature verification
-    
+    console.log('[WALLET-CONNECTED]', {
+      wallet: wallet.slice(0, 8) + '...',
+      status: 'unauthenticated',
+    });
+
     console.log('[WALLET-AUTH-REQUEST]', {
       wallet: wallet.slice(0, 8) + '...',
       nonce: nonce.slice(0, 8) + '...',
       timestamp,
     });
 
-    // Mock verification (replace with real verification)
-    const isValid = signature && signature.length > 0;
+    // CRITICAL: Cryptographically verify signature using tweetnacl
+    // This is NOT a placeholder - real verification happens here
+    const verification = verifyWalletActivation(wallet, message, signature, nonce, timestamp);
     
-    if (isValid) {
-      console.log('[WALLET-AUTH-VERIFIED]', {
+    if (!verification.valid) {
+      console.log('[WALLET-AUTH-FAILED]', {
         wallet: wallet.slice(0, 8) + '...',
-        signature_valid: true,
-        nonce_consumed: true,
-      });
-      
-      console.log('[SESSION-ACTIVE]', {
-        wallet: wallet.slice(0, 8) + '...',
-        privileges: 'affiliate_access',
+        error: verification.error,
       });
 
-      res.json({ success: true });
-    } else {
-      res.status(401).json({
+      return res.status(401).json({
         success: false,
-        error: 'Invalid signature',
+        error: verification.error || 'Wallet verification failed',
       });
     }
+
+    // Signature verified cryptographically
+    console.log('[WALLET-AUTH-VERIFIED]', {
+      wallet: wallet.slice(0, 8) + '...',
+      signature_valid: true,
+      nonce_consumed: true,
+    });
+
+    // Mark wallet as activated (gates affiliate creation)
+    markWalletActivated(wallet);
+    
+    console.log('[SESSION-ACTIVE]', {
+      wallet: wallet.slice(0, 8) + '...',
+      privileges: 'affiliate_access',
+    });
+
+    res.json({ success: true });
   } catch (error) {
     console.error('Wallet verification error:', error);
     res.status(500).json({
