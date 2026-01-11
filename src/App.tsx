@@ -526,9 +526,27 @@ Nonce: ${nonce}`;
     if (!publicKey || !signMessage || !affiliateIdFromUrl || attributionComplete) return;
 
     try {
-      // Generate nonce and timestamp
-      const nonce = generateNonce();
-      const timestamp = Date.now();
+      console.log('[ATTRIBUTE-REFERRAL] Starting attribution', {
+        wallet: publicKey.toString().slice(0, 8) + '...',
+        affiliateId: affiliateIdFromUrl,
+      });
+
+      // Fetch nonce from backend (required for signature verification)
+      const nonceResponse = await fetch('/api/nonce');
+      if (!nonceResponse.ok) {
+        const errorText = await nonceResponse.text();
+        console.error('[ATTRIBUTE-REFERRAL] Failed to fetch nonce', {
+          status: nonceResponse.status,
+          error: errorText,
+        });
+        setVerificationError('Failed to fetch nonce. Please try again.');
+        return;
+      }
+
+      const nonceData = await nonceResponse.json();
+      const { nonce, timestamp } = nonceData;
+      
+      console.log('[ATTRIBUTE-REFERRAL] Nonce fetched', { nonce, timestamp });
       
       // Create message to sign
       const message = `Action: AttributeReferral
@@ -541,6 +559,8 @@ Nonce: ${nonce}`;
       const encodedMessage = new TextEncoder().encode(message);
       const signature = await signMessage(encodedMessage);
       
+      console.log('[ATTRIBUTE-REFERRAL] Signature obtained');
+      
       // Convert signature to base64
       let binary = '';
       const chunkSize = 8192;
@@ -550,6 +570,7 @@ Nonce: ${nonce}`;
       const signedMessage = btoa(binary);
 
       // Send to backend with signature
+      console.log('[ATTRIBUTE-REFERRAL] Sending to backend');
       const result = await attributeReferral({
         referred_wallet: publicKey.toString(),
         affiliate_id: affiliateIdFromUrl,
@@ -559,11 +580,20 @@ Nonce: ${nonce}`;
         nonce,
       });
       
+      console.log('[ATTRIBUTE-REFERRAL] Backend response', { success: result.success, message: result.message });
+      
       if (result.success) {
         setAttributionComplete(true);
+        setVerificationError(null);
+        console.log('[ATTRIBUTE-REFERRAL] Attribution successful');
+      } else {
+        // Show error message to user
+        setVerificationError(result.message || 'Attribution failed. Please try again.');
+        console.error('[ATTRIBUTE-REFERRAL] Attribution failed', result);
       }
     } catch (error) {
-      console.error('Attribution error:', error);
+      console.error('[ATTRIBUTE-REFERRAL] Error', error);
+      setVerificationError(error instanceof Error ? error.message : 'Attribution error. Please try again.');
     }
   }, [publicKey, signMessage, affiliateIdFromUrl, attributionComplete]);
 
@@ -808,6 +838,9 @@ Nonce: ${nonce}`;
             <p className="text-xs text-gray-400 mb-4">
               This action requires a wallet signature to authorize attribution.
             </p>
+            {verificationError && (
+              <p className="text-sm text-red-400 mb-4">{verificationError}</p>
+            )}
             <button
               onClick={handleAttributeReferral}
               disabled={!signMessage}
