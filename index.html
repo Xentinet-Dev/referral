@@ -6,9 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Countdown Window</title>
     <!-- Rewardful Attribution Script -->
-    <script>(function(w,r){w._rwq=r;w[r]=w[r]||function(){(w[r].q=w[r].q||[]).push(arguments)}})(window,'rewardful');</script>
-    <script async src='https://r.wdfl.co/rw.js' data-rewardful='a97c5f'></script>
-    <!-- Rewardful will automatically track via ?via= parameter or rewardful_referral cookie -->
+    <script>
+      // Only initialize Rewardful if there's a valid ?via= parameter
+      (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const viaParam = urlParams.get('via');
+        
+        // Only load Rewardful if there's a referral parameter
+        if (viaParam) {
+          (function(w,r){w._rwq=r;w[r]=w[r]||function(){(w[r].q=w[r].q||[]).push(arguments)}})(window,'rewardful');
+          var script = document.createElement('script');
+          script.async = true;
+          script.src = 'https://r.wdfl.co/rw.js';
+          script.setAttribute('data-rewardful', 'a97c5f');
+          document.head.appendChild(script);
+        }
+      })();
+    </script>
+    <!-- Rewardful will automatically track via ?via= parameter when present -->
   </head>
   <body>
     <div id="root"></div>
