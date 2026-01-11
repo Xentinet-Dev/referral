@@ -28,6 +28,7 @@ const BONUS_PER_REFERRAL = 1;
 
 /**
  * Get current successful referral count for a wallet from Supabase
+ * Counts referrals where this wallet is the referrer
  */
 async function getReferralCount(wallet) {
   if (!supabase) {
@@ -35,11 +36,11 @@ async function getReferralCount(wallet) {
   }
 
   try {
-    // Count distinct referral_ids for this wallet
+    // Count referrals where this wallet is the referrer
     const { count, error } = await supabase
-      .from('rewardful_conversions')
-      .select('referral_id', { count: 'exact', head: true })
-      .eq('wallet', wallet);
+      .from('referrals')
+      .select('referee_wallet', { count: 'exact', head: true })
+      .eq('referrer_wallet', wallet);
 
     if (error) {
       console.error('[REFERRAL-PROGRESS] Error getting referral count', {

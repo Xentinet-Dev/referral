@@ -120,6 +120,78 @@ async function markWalletActivated(wallet) {
   }
 }
 
+async function bindReferral(refereeWallet, referrerAffiliateId) {
+  if (!supabase || !referrerAffiliateId) {
+    return;
+  }
+
+  try {
+    // Look up referrer wallet from affiliate ID
+    const { data: affiliateData, error: affiliateError } = await supabase
+      .from('wallet_affiliates')
+      .select('wallet')
+      .eq('affiliate_id', referrerAffiliateId)
+      .single();
+
+    if (affiliateError || !affiliateData) {
+      console.log('[REFERRAL-BIND] Affiliate ID not found', {
+        affiliateId: referrerAffiliateId,
+        error: affiliateError?.message,
+      });
+      return;
+    }
+
+    const referrerWallet = affiliateData.wallet;
+
+    // Prevent self-referrals
+    if (refereeWallet === referrerWallet) {
+      console.log('[REFERRAL-BIND] Self-referral ignored', {
+        wallet: refereeWallet.slice(0, 8) + '...',
+      });
+      return;
+    }
+
+    // Insert referral binding (ignore if already exists)
+    const { data, error } = await supabase
+      .from('referrals')
+      .insert({
+        referee_wallet: refereeWallet,
+        referrer_wallet: referrerWallet,
+        referrer_affiliate_id: referrerAffiliateId,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      // Check if it's a duplicate key error (already bound)
+      if (error.code === '23505') {
+        console.log('[REFERRAL-BIND] EXISTS', {
+          referee: refereeWallet.slice(0, 8) + '...',
+          referrer: referrerWallet.slice(0, 8) + '...',
+          affiliateId: referrerAffiliateId,
+        });
+      } else {
+        console.error('[REFERRAL-BIND] Error', {
+          referee: refereeWallet.slice(0, 8) + '...',
+          referrer: referrerWallet.slice(0, 8) + '...',
+          error: error.message,
+        });
+      }
+    } else {
+      console.log('[REFERRAL-BIND] CREATED', {
+        referee: refereeWallet.slice(0, 8) + '...',
+        referrer: referrerWallet.slice(0, 8) + '...',
+        affiliateId: referrerAffiliateId,
+      });
+    }
+  } catch (error) {
+    console.error('[REFERRAL-BIND] Exception', {
+      referee: refereeWallet.slice(0, 8) + '...',
+      error: error.message,
+    });
+  }
+}
+
 /**
  * Vercel serverless function handler
  */
@@ -134,7 +206,7 @@ export default async function handler(req, res) {
 
   const startTime = Date.now();
   try {
-    const { wallet, message, signature, nonce, timestamp } = req.body;
+    const { wallet, message, signature, nonce, timestamp, referrerAffiliateId } = req.body;
 
     if (!wallet || !message || !signature || !nonce || !timestamp) {
       return res.status(400).json({
@@ -213,10 +285,16 @@ export default async function handler(req, res) {
     // Signature verified cryptographically - mark as activated in Supabase
     await markWalletActivated(wallet);
 
+    // Bind referral if referrerAffiliateId is provided
+    if (referrerAffiliateId) {
+      await bindReferral(wallet, referrerAffiliateId);
+    }
+
     console.log('[WALLET-AUTH-VERIFIED]', {
       wallet: wallet.slice(0, 8) + '...',
       signature_valid: true,
       nonce_consumed: true,
+      has_referral: !!referrerAffiliateId,
       timestamp: new Date().toISOString(),
     });
 

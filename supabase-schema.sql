@@ -37,8 +37,22 @@ CREATE TABLE IF NOT EXISTS nonces (
 -- Index for cleanup of expired nonces
 CREATE INDEX IF NOT EXISTS idx_nonces_expires_at ON nonces(expires_at);
 
--- Table 4: Rewardful Conversions
--- Tracks processed referral conversions for idempotency and referral counts
+-- Table 4: Referrals
+-- Server-authoritative referral bindings (immutable)
+CREATE TABLE IF NOT EXISTS referrals (
+  referee_wallet TEXT PRIMARY KEY,
+  referrer_wallet TEXT NOT NULL,
+  referrer_affiliate_id TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for faster lookups
+CREATE INDEX IF NOT EXISTS idx_referrals_referee ON referrals(referee_wallet);
+CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_wallet);
+CREATE INDEX IF NOT EXISTS idx_referrals_affiliate ON referrals(referrer_affiliate_id);
+
+-- Table 5: Rewardful Conversions
+-- Tracks processed referral conversions for idempotency (analytics only)
 CREATE TABLE IF NOT EXISTS rewardful_conversions (
   referral_id TEXT PRIMARY KEY,
   wallet TEXT NOT NULL,
@@ -51,13 +65,12 @@ CREATE TABLE IF NOT EXISTS rewardful_conversions (
 CREATE INDEX IF NOT EXISTS idx_rewardful_conversions_referral ON rewardful_conversions(referral_id);
 CREATE INDEX IF NOT EXISTS idx_rewardful_conversions_wallet ON rewardful_conversions(wallet);
 CREATE INDEX IF NOT EXISTS idx_rewardful_conversions_affiliate ON rewardful_conversions(affiliate_id);
--- Index for counting referrals per wallet (used by referral-progress endpoint)
-CREATE INDEX IF NOT EXISTS idx_rewardful_conversions_wallet_count ON rewardful_conversions(wallet, processed_at);
 
 -- Enable Row Level Security (RLS) - API routes use service role key, so this is for safety
 ALTER TABLE wallet_activation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallet_affiliates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE nonces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE referrals ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rewardful_conversions ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Service role can do everything (used by API routes)
@@ -65,6 +78,7 @@ ALTER TABLE rewardful_conversions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Service role full access wallet_activation" ON wallet_activation;
 DROP POLICY IF EXISTS "Service role full access wallet_affiliates" ON wallet_affiliates;
 DROP POLICY IF EXISTS "Service role full access nonces" ON nonces;
+DROP POLICY IF EXISTS "Service role full access referrals" ON referrals;
 DROP POLICY IF EXISTS "Service role full access rewardful_conversions" ON rewardful_conversions;
 
 -- Create policies with both USING and WITH CHECK clauses
@@ -81,6 +95,11 @@ CREATE POLICY "Service role full access wallet_affiliates" ON wallet_affiliates
   WITH CHECK (auth.role() = 'service_role');
 
 CREATE POLICY "Service role full access nonces" ON nonces
+  FOR ALL 
+  USING (auth.role() = 'service_role')
+  WITH CHECK (auth.role() = 'service_role');
+
+CREATE POLICY "Service role full access referrals" ON referrals
   FOR ALL 
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');

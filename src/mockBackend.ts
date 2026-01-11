@@ -60,7 +60,7 @@ interface ReferralMappingRecord {
 
 const referrerStore = new Map<string, ReferrerRecord>();
 const referralMappingStore = new Map<string, ReferralMappingRecord>(); // Key: referred_wallet
-const affiliateIdStore = new Map<string, string>(); // affiliate_id → wallet_address
+// affiliateIdStore removed - referral attribution is now server-authoritative
 const usedNonces = new Set<string>(); // Track used nonces to prevent replay
 
 // Constants
@@ -411,7 +411,7 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
 
     // Store Rewardful affiliate ID (not local random ID)
     const rewardfulAffiliateId = rewardfulData.affiliateId;
-    affiliateIdStore.set(rewardfulAffiliateId, request.wallet);
+    // affiliateIdStore removed - referral attribution is now server-authoritative
 
     referrer.affiliate_id = rewardfulAffiliateId;
     referrerStore.set(request.wallet, referrer);
@@ -439,180 +439,9 @@ export const issueAffiliateLink: IssueAffiliateLinkFunction = async (
 // ============================================================================
 // REFERRAL ATTRIBUTION
 // ============================================================================
-
-/**
- * Attribute a referral when a new user visits via link.
- * 
- * REQUIRES SIGNATURE - User must sign message to authorize attribution
- */
-export const attributeReferral: AttributeReferralFunction = async (
-  request: AttributeReferralRequest
-): Promise<AttributeReferralResponse> => {
-  await new Promise(resolve => setTimeout(resolve, 300));
-
-  // Verify signature
-  const signatureValid = verifySignature(request.message, request.signature, request.referred_wallet);
-  if (!signatureValid) {
-    return {
-      success: false,
-      message: 'Invalid signature',
-    };
-  }
-
-  // Validate nonce and timestamp
-  const nonceCheck = validateNonceAndTimestamp(request.nonce, request.timestamp);
-  if (!nonceCheck.valid) {
-    return {
-      success: false,
-      message: nonceCheck.error || 'Invalid nonce or timestamp',
-    };
-  }
-
-  // Mark nonce as used
-  markNonceUsed(request.nonce);
-
-  // Get referrer wallet from affiliate ID
-  // First check in-memory store, then try backend API
-  let referrerWallet = affiliateIdStore.get(request.affiliate_id);
-  
-  if (!referrerWallet) {
-    // Try to fetch from backend API (Supabase)
-    try {
-      const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
-      const apiPath = backendUrl ? `${backendUrl}/api/referral-progress` : '/api/referral-progress';
-      
-      // We need to find which wallet has this affiliate ID
-      // Since we don't have a direct lookup endpoint, we'll need to check if this is a valid Rewardful affiliate ID
-      // For now, we'll assume the affiliate ID is valid if it's from Rewardful
-      // The actual referral counting happens through webhooks anyway
-      console.log('[ATTRIBUTE-REFERRAL] Affiliate ID not in local store, checking backend...', {
-        affiliateId: request.affiliate_id,
-      });
-      
-      // Since we can't easily reverse-lookup wallet from affiliate ID via the current API,
-      // we'll allow the attribution to proceed if the affiliate ID looks valid (starts with 'aff_' for Rewardful)
-      // The webhook will handle the actual referral counting
-      if (request.affiliate_id && request.affiliate_id.startsWith('aff_')) {
-        // This is a valid Rewardful affiliate ID format
-        // We'll create a temporary mapping for this session
-        // The actual referral will be tracked by Rewardful and processed via webhook
-        console.log('[ATTRIBUTE-REFERRAL] Valid Rewardful affiliate ID detected, allowing attribution');
-        // We can't determine the referrer wallet without a backend lookup, but Rewardful will handle the tracking
-        // For now, we'll skip the referrer wallet check and let Rewardful handle it
-        referrerWallet = 'UNKNOWN'; // Placeholder - Rewardful will track this
-      } else {
-        return {
-          success: false,
-          message: 'Invalid affiliate ID format',
-        };
-      }
-    } catch (error) {
-      console.error('[ATTRIBUTE-REFERRAL] Error checking backend for affiliate ID', error);
-      return {
-        success: false,
-        message: 'Failed to verify affiliate ID',
-      };
-    }
-  }
-
-  // Check for self-referral (skip if referrerWallet is placeholder)
-  if (referrerWallet !== 'UNKNOWN' && request.referred_wallet === referrerWallet) {
-    return {
-      success: false,
-      message: 'Self-referrals are not allowed',
-      is_self_referral: true,
-    };
-  }
-
-  // Check if already attributed
-  if (referralMappingStore.has(request.referred_wallet)) {
-    const existing = referralMappingStore.get(request.referred_wallet)!;
-    if (existing.affiliate_id === request.affiliate_id) {
-      return {
-        success: true,
-        message: 'Referral already attributed',
-        already_attributed: true,
-      };
-    } else {
-      return {
-        success: false,
-        message: 'Wallet already attributed to different affiliate',
-        already_attributed: true,
-      };
-    }
-  }
-
-  // Record attribution
-  // Note: If referrerWallet is 'UNKNOWN', the actual referrer will be determined by Rewardful webhook
-  referralMappingStore.set(request.referred_wallet, {
-    affiliate_id: request.affiliate_id,
-    referrer_wallet: referrerWallet !== 'UNKNOWN' ? referrerWallet : 'PENDING_WEBHOOK',
-    referred_wallet: request.referred_wallet,
-    referred_validated: false,
-    validated_at: null,
-    attributed_at: Date.now(),
-  });
-  
-  // Store the affiliate ID mapping for future lookups
-  if (referrerWallet !== 'UNKNOWN') {
-    affiliateIdStore.set(request.affiliate_id, referrerWallet);
-  }
-
-  return {
-    success: true,
-    message: 'Referral attributed successfully',
-  };
-};
-
-// ============================================================================
-// REFEREE VALIDATION
-// ============================================================================
-
-/**
- * Validate that a referred wallet has acquired ≥ $2 USD worth of token.
- */
-export const validateReferredWallet: ValidateReferredWalletFunction = async (
-  wallet: string
-): Promise<ValidationResult> => {
-  const mapping = referralMappingStore.get(wallet);
-  if (!mapping) {
-    return {
-      validated: false,
-      usd_value: 0,
-      validated_at: null,
-      error: 'Wallet is not a referred user',
-    };
-  }
-
-  if (mapping.referred_validated) {
-    return {
-      validated: true,
-      usd_value: 2.5,
-      validated_at: mapping.validated_at || null,
-    };
-  }
-
-  // For referred wallets, we still need to check holdings
-  // In production, this would verify on-chain purchases
-  const walletHash = wallet.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-  const mockValidated = (walletHash % 10) >= 3;
-  const mockUsdValue = mockValidated ? 2.5 : 1.0;
-
-  if (mockValidated && mockUsdValue >= VALIDATION_THRESHOLD_USD) {
-    mapping.referred_validated = true;
-    mapping.validated_at = Date.now();
-    referralMappingStore.set(wallet, mapping);
-
-    await incrementReferralCount(mapping.referrer_wallet);
-  }
-
-  return {
-    validated: mockValidated && mockUsdValue >= VALIDATION_THRESHOLD_USD,
-    usd_value: mockUsdValue,
-    validated_at: mockValidated ? Date.now() : null,
-    error: mockValidated ? undefined : `Holdings must be ≥ $${VALIDATION_THRESHOLD_USD} USD`,
-  };
-};
+// REMOVED: Referral attribution is now server-authoritative
+// Referrals are bound during wallet verification in /api/verify-wallet
+// No client-side attribution logic remains
 
 // ============================================================================
 // INCREMENT REFERRAL COUNT

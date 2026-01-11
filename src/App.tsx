@@ -4,8 +4,6 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import {
   validateHoldings,
   issueAffiliateLink,
-  attributeReferral,
-  validateReferredWallet,
   getReferrerData,
 } from './mockBackend';
 
@@ -50,10 +48,8 @@ function App() {
     max_bonus_reached: boolean;
   } | null>(null);
   
-  // Referred user state
+  // Referred user state (for capturing ?via= parameter)
   const [affiliateIdFromUrl, setAffiliateIdFromUrl] = useState<string | null>(null);
-  const [referredValidationStatus, setReferredValidationStatus] = useState<'idle' | 'checking' | 'validated' | 'failed'>('idle');
-  const [attributionComplete, setAttributionComplete] = useState(false);
 
   // CRITICAL: Force disconnect on mount - enforce stateless sessions
   // This ensures no cached wallet sessions persist across page reloads
@@ -169,6 +165,9 @@ Nonce: ${nonce}`;
       });
 
       // Send to backend for verification
+      // Include referrerAffiliateId if present (from ?via= parameter)
+      const referrerAffiliateId = affiliateIdFromUrl || sessionStorage.getItem('referrerAffiliateId');
+      
       // Use relative URL for Vercel serverless functions, or VITE_BACKEND_URL if set
       const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
       const apiPath = backendUrl ? `${backendUrl}/api/verify-wallet` : '/api/verify-wallet';
@@ -181,6 +180,7 @@ Nonce: ${nonce}`;
           message,
           nonce,
           timestamp,
+          referrerAffiliateId: referrerAffiliateId || undefined,
         }),
       });
 
@@ -319,12 +319,20 @@ Nonce: ${nonce}`;
     }
   }, [publicKey, signMessage, beginActivation]);
 
-  // Check for ?via= parameter (referred user) - NO SIGNING HERE
+  // Check for ?via= parameter (referred user) - Store in sessionStorage
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const viaParam = urlParams.get('via');
     if (viaParam) {
       setAffiliateIdFromUrl(viaParam);
+      // Store in sessionStorage for persistence across page reloads
+      sessionStorage.setItem('referrerAffiliateId', viaParam);
+    } else {
+      // Check sessionStorage if URL param is missing
+      const stored = sessionStorage.getItem('referrerAffiliateId');
+      if (stored) {
+        setAffiliateIdFromUrl(stored);
+      }
     }
   }, []);
 
@@ -521,101 +529,6 @@ Nonce: ${nonce}`;
     }
   }, [publicKey, signMessage, referralLink]);
 
-  // Attribute referral - REQUIRES SIGNATURE (user click only)
-  const handleAttributeReferral = useCallback(async () => {
-    if (!publicKey || !signMessage || !affiliateIdFromUrl || attributionComplete) return;
-
-    try {
-      console.log('[ATTRIBUTE-REFERRAL] Starting attribution', {
-        wallet: publicKey.toString().slice(0, 8) + '...',
-        affiliateId: affiliateIdFromUrl,
-      });
-
-      // Fetch nonce from backend (required for signature verification)
-      const nonceResponse = await fetch('/api/nonce');
-      if (!nonceResponse.ok) {
-        const errorText = await nonceResponse.text();
-        console.error('[ATTRIBUTE-REFERRAL] Failed to fetch nonce', {
-          status: nonceResponse.status,
-          error: errorText,
-        });
-        setVerificationError('Failed to fetch nonce. Please try again.');
-        return;
-      }
-
-      const nonceData = await nonceResponse.json();
-      const { nonce, timestamp } = nonceData;
-      
-      console.log('[ATTRIBUTE-REFERRAL] Nonce fetched', { nonce, timestamp });
-      
-      // Create message to sign
-      const message = `Action: AttributeReferral
-Wallet: ${publicKey.toString()}
-AffiliateID: ${affiliateIdFromUrl}
-Timestamp: ${timestamp}
-Nonce: ${nonce}`;
-
-      // Request signature from user
-      const encodedMessage = new TextEncoder().encode(message);
-      const signature = await signMessage(encodedMessage);
-      
-      console.log('[ATTRIBUTE-REFERRAL] Signature obtained');
-      
-      // Convert signature to base64
-      let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < signature.length; i += chunkSize) {
-        binary += String.fromCharCode(...signature.slice(i, i + chunkSize));
-      }
-      const signedMessage = btoa(binary);
-
-      // Send to backend with signature
-      console.log('[ATTRIBUTE-REFERRAL] Sending to backend');
-      const result = await attributeReferral({
-        referred_wallet: publicKey.toString(),
-        affiliate_id: affiliateIdFromUrl,
-        message,
-        signature: signedMessage,
-        timestamp,
-        nonce,
-      });
-      
-      console.log('[ATTRIBUTE-REFERRAL] Backend response', { success: result.success, message: result.message });
-      
-      if (result.success) {
-        setAttributionComplete(true);
-        setVerificationError(null);
-        console.log('[ATTRIBUTE-REFERRAL] Attribution successful');
-      } else {
-        // Show error message to user
-        setVerificationError(result.message || 'Attribution failed. Please try again.');
-        console.error('[ATTRIBUTE-REFERRAL] Attribution failed', result);
-      }
-    } catch (error) {
-      console.error('[ATTRIBUTE-REFERRAL] Error', error);
-      setVerificationError(error instanceof Error ? error.message : 'Attribution error. Please try again.');
-    }
-  }, [publicKey, signMessage, affiliateIdFromUrl, attributionComplete]);
-
-  // Validate referred wallet (for users who came via ?via=)
-  const handleValidateReferredWallet = useCallback(async () => {
-    if (!publicKey || !affiliateIdFromUrl) return;
-
-    setReferredValidationStatus('checking');
-
-    try {
-      const result = await validateReferredWallet(publicKey.toString());
-      
-      if (result.validated) {
-        setReferredValidationStatus('validated');
-      } else {
-        setReferredValidationStatus('failed');
-      }
-    } catch (error) {
-      setReferredValidationStatus('failed');
-      console.error('Referred wallet validation error:', error);
-    }
-  }, [publicKey, affiliateIdFromUrl]);
 
   // Copy referral link
   const handleCopyLink = useCallback(() => {
@@ -827,59 +740,6 @@ Nonce: ${nonce}`;
         </section>
       )}
 
-      {/* Referred User Section (Only shown if verified) */}
-      {isVerified && publicKey && affiliateIdFromUrl && !attributionComplete && (
-        <section className="mb-8">
-          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-4">Referred User</h2>
-            <p className="text-sm text-gray-300 mb-4">
-              You arrived via a referral link. Sign to authorize referral attribution.
-            </p>
-            <p className="text-xs text-gray-400 mb-4">
-              This action requires a wallet signature to authorize attribution.
-            </p>
-            {verificationError && (
-              <p className="text-sm text-red-400 mb-4">{verificationError}</p>
-            )}
-            <button
-              onClick={handleAttributeReferral}
-              disabled={!signMessage}
-              className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed font-medium"
-            >
-              Authorize Referral Attribution
-            </button>
-          </div>
-        </section>
-      )}
-
-      {/* Referred User Validation (Only shown if verified) */}
-      {isVerified && publicKey && affiliateIdFromUrl && attributionComplete && (
-        <section className="mb-8">
-          <div className="bg-gray-900 bg-opacity-50 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-lg font-semibold mb-4">Referred User</h2>
-            <p className="text-sm text-gray-300 mb-4">
-              Referral attributed. Validate your holdings to count as a successful referral.
-            </p>
-            {referredValidationStatus === 'idle' && (
-              <button
-                onClick={handleValidateReferredWallet}
-                className="px-6 py-3 bg-green-600 text-white rounded hover:bg-green-700 font-medium"
-              >
-                Validate Holdings
-              </button>
-            )}
-            {referredValidationStatus === 'checking' && (
-              <p className="text-sm text-gray-400">Validating...</p>
-            )}
-            {referredValidationStatus === 'validated' && (
-              <p className="text-sm text-green-400">✓ Validated - You count as a successful referral!</p>
-            )}
-            {referredValidationStatus === 'failed' && (
-              <p className="text-sm text-red-400">Validation failed - You must hold ≥ ${VALIDATION_THRESHOLD_USD} USD worth of token.</p>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* Referral Link Modal */}
       {showReferralLinkModal && referralLink && (
